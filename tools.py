@@ -11,6 +11,8 @@ Every tool returns a plain dict (JSON-ready for the LLM and the API). The dict
 includes the Cypher that ran, so the UI can show users exactly how each answer
 was found. Unknown service names return an error plus the list of valid names,
 so the LLM can correct itself and retry.
+
+All tools take `g`, a FalkorDB Graph handle from db.get_graph().
 """
 import time
 
@@ -21,22 +23,44 @@ TIMEOUT_MS = 3000
 # Upper bound for variable-length DEPENDS_ON walks (the "*1..N" in the patterns).
 # This is our own choice, not a FalkorDB rule: FalkorDB's default upper bound is
 # unlimited. A cap keeps the number of paths the query explores bounded if the
-# graph grows or ever gains a cycle. The longest chain in the seeded graph is 6
-# hops (api-gateway -> ... -> feature-store), so 8 leaves headroom.
-# tests/test_seed.py fails if the seed ever outgrows this cap.
+# graph grows or ever gains a cycle. The longest chain in the seeded graph is 6 hops:
+#   api-gateway -> frontend -> checkoutservice -> paymentservice
+#               -> fraud-check -> risk-model -> feature-store
+# so 8 leaves headroom. tests/test_seed.py fails if the seed ever outgrows this cap.
 MAX_HOPS = 8
 
 
 def _run(g, cypher, params=None):
-    """Run a read-only query with the standard timeout and return its rows."""
+    """Run one read-only query with the standard timeout.
+
+    Args:
+        g: FalkorDB Graph handle.
+        cypher: Query text. Values must be passed as $params, never formatted in.
+        params: Dict of query parameters, or None.
+
+    Returns:
+        List of result rows; each row is a list of column values.
+
+    Raises:
+        redis.exceptions.ResponseError: if the query tries to write, has a
+        syntax error, or runs past TIMEOUT_MS.
+    """
     return g.ro_query(cypher, params, timeout=TIMEOUT_MS).result_set
 
 
 def _check_service(g, name):
-    """Return None if `name` is a known service, else an error dict for the LLM.
+    """Check that a Service node called `name` exists.
 
     The error lists every valid name, so a typo like "payment-db" can be fixed
     by the model on its next call instead of ending the investigation.
+
+    Args:
+        g: FalkorDB Graph handle.
+        name: Service name as given by the LLM.
+
+    Returns:
+        None if the service exists, otherwise
+        {"error": str, "known_services": [str, ...]}.
     """
     if _run(g, "MATCH (s:Service {name: $name}) RETURN count(s)", {"name": name})[0][0]:
         return None
@@ -44,11 +68,34 @@ def _check_service(g, name):
     return {"error": f"unknown service '{name}'", "known_services": known}
 
 
-def dependencies(g, service):
-    """Services that `service` calls, directly or indirectly: possible root causes.
+def _minutes_ago(now_ms, ts):
+    """Convert an epoch-ms timestamp to whole minutes before `now_ms`.
 
-    Follows DEPENDS_ON edges outward. `hops` is the shortest distance, so a
-    service reachable by several routes appears once.
+    "14 minutes ago" is easier for the LLM and for people than a raw epoch value.
+    """
+    return round((now_ms - ts) / 60_000)
+
+
+def dependencies(g, service):
+    """Find every service that `service` calls, directly or indirectly.
+
+    These are the possible root causes when `service` is failing. Follows
+    DEPENDS_ON edges outward up to MAX_HOPS. A service reachable by several
+    routes appears once, with its shortest distance.
+
+    Args:
+        g: FalkorDB Graph handle.
+        service: Name of the failing service, e.g. "checkoutservice".
+
+    Returns:
+        {"service": str,
+         "depends_on": [{"service": str, "hops": int}, ...]  # nearest first
+         "cypher": str}
+        or the _check_service error dict for an unknown name.
+
+    Example:
+        dependencies(g, "checkoutservice")["depends_on"][:2]
+        -> [{"service": "cartservice", "hops": 1}, {"service": "currencyservice", "hops": 1}]
     """
     if err := _check_service(g, service):
         return err
@@ -62,9 +109,24 @@ def dependencies(g, service):
 
 
 def blast_radius(g, service):
-    """Services that call `service`, directly or indirectly: what breaks if it fails.
+    """Find every service that calls `service`, directly or indirectly.
 
-    Same walk as dependencies(), but along incoming DEPENDS_ON edges.
+    This is what breaks if `service` fails. Same walk as dependencies(), but
+    along incoming DEPENDS_ON edges.
+
+    Args:
+        g: FalkorDB Graph handle.
+        service: Name of the service that might fail, e.g. "payments-db".
+
+    Returns:
+        {"service": str,
+         "affected": [{"service": str, "hops": int}, ...]  # nearest first
+         "cypher": str}
+        or the _check_service error dict for an unknown name.
+
+    Example:
+        blast_radius(g, "payments-db")["affected"][:2]
+        -> [{"service": "fraud-check", "hops": 1}, {"service": "paymentservice", "hops": 1}]
     """
     if err := _check_service(g, service):
         return err
@@ -76,35 +138,67 @@ def blast_radius(g, service):
 
 
 def recent_changes(g, minutes=60, now_ms=None):
-    """Deploys and unresolved alerts in the last `minutes`, newest first.
+    """List deploys and still-open alerts from the last `minutes`, newest first.
 
-    Timestamps are stored as integer epoch milliseconds (indexed in seed.py).
-    `now_ms` can be fixed by tests so results do not depend on the wall clock.
+    Usually the agent's first call: "what changed just before things broke?"
+    Timestamps are integer epoch milliseconds (indexed in seed.py). Each list
+    is capped at 20 rows to keep the LLM prompt small.
+
+    Args:
+        g: FalkorDB Graph handle.
+        minutes: How far back to look. Default 60.
+        now_ms: Reference time in epoch ms. Defaults to the current time;
+            tests pass a fixed value so results do not depend on the clock.
+
+    Returns:
+        {"deploys": [{"service", "version", "by", "minutes_ago"}, ...],
+         "alerts":  [{"service", "severity", "message", "minutes_ago"}, ...],
+         "cypher":  [deploy query, alert query]}
+
+    Example (Story A):
+        recent_changes(g)["deploys"]
+        -> [{"service": "fraud-check", "version": "v3.1.0",
+             "by": "Daniel Okafor", "minutes_ago": 14}]
     """
     now_ms = now_ms or int(time.time() * 1000)
     params = {"since": now_ms - minutes * 60_000}
     deploy_q = ("MATCH (p:Person)-[:DEPLOYED]->(d:Deploy)-[:TO]->(s:Service) WHERE d.ts >= $since "
                 "RETURN s.name, d.version, p.name, d.ts ORDER BY d.ts DESC LIMIT 20")
+    # Resolved alerts are left out: they are background noise, not the incident.
     alert_q = ("MATCH (a:Alert)-[:FIRED_ON]->(s:Service) WHERE a.ts >= $since AND NOT a.resolved "
                "RETURN s.name, a.severity, a.message, a.ts ORDER BY a.ts DESC LIMIT 20")
-    # Minutes ago reads better for the LLM and for people than raw epoch values.
-    ago = lambda ts: round((now_ms - ts) / 60_000)
     return {
-        "deploys": [{"service": s, "version": v, "by": p, "minutes_ago": ago(ts)}
+        "deploys": [{"service": s, "version": v, "by": p, "minutes_ago": _minutes_ago(now_ms, ts)}
                     for s, v, p, ts in _run(g, deploy_q, params)],
-        "alerts": [{"service": s, "severity": sev, "message": m, "minutes_ago": ago(ts)}
+        "alerts": [{"service": s, "severity": sev, "message": m,
+                    "minutes_ago": _minutes_ago(now_ms, ts)}
                    for s, sev, m, ts in _run(g, alert_q, params)],
         "cypher": [deploy_q, alert_q],
     }
 
 
 def dependency_path(g, from_service, to_service):
-    """Lowest-latency call path between two services (either direction), or none.
+    """Find the lowest-latency call path between two services, in either direction.
 
     Uses algo.SPpaths with each edge's `weight` (typical latency in ms). Calls
-    only go one way, so we try a -> b first and then b -> a; the LLM does not
-    need to know which service is the caller. "No path" is a useful answer: it
-    shows an alert is unrelated to the incident (e.g. adservice in Story C).
+    only go one way, so we try from -> to first and then to -> from; the LLM
+    does not need to know which service is the caller. "No path" is a useful
+    answer: it shows an alert is unrelated to the incident (Story C, adservice).
+
+    Args:
+        g: FalkorDB Graph handle.
+        from_service: One service name, e.g. "checkoutservice".
+        to_service: The other service name, e.g. "payments-db".
+
+    Returns:
+        {"path": [str, ...], "latency_ms": float, "cypher": str} when connected,
+        {"path": None, "note": str, "cypher": str} when not,
+        or the _check_service error dict for an unknown name.
+
+    Example:
+        dependency_path(g, "checkoutservice", "payments-db")
+        -> {"path": ["checkoutservice", "paymentservice", "payments-db"],
+            "latency_ms": 36.0, ...}
     """
     for name in (from_service, to_service):
         if err := _check_service(g, name):
@@ -113,6 +207,7 @@ def dependency_path(g, from_service, to_service):
               "CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: ['DEPENDS_ON'], "
               "weightProp: 'weight'}) YIELD path, pathWeight "
               "RETURN [n IN nodes(path) | n.name], pathWeight")
+    # Try the given order first, then the reverse.
     for a, b in ((from_service, to_service), (to_service, from_service)):
         rows = _run(g, cypher, {"a": a, "b": b})
         if rows:
@@ -122,10 +217,26 @@ def dependency_path(g, from_service, to_service):
 
 
 def critical_services(g, metric="betweenness", limit=5):
-    """Rank services by graph importance.
+    """Rank services by how important they are in the dependency graph.
 
-    'betweenness': chokepoints, services that many call paths pass through.
-    'pagerank':    services that many others depend on, directly or not.
+    Metrics:
+        "betweenness": chokepoints, services that many call paths pass through.
+            If one fails, many request flows break.
+        "pagerank": services that many others depend on, directly or not
+            (often shared databases).
+
+    Args:
+        g: FalkorDB Graph handle.
+        metric: "betweenness" (default) or "pagerank".
+        limit: How many services to return (clamped to the 22 in the graph).
+
+    Returns:
+        {"metric": str, "ranking": [{"service": str, "score": float}, ...], "cypher": str}
+        or {"error": str} for an unknown metric.
+
+    Example (Story B):
+        critical_services(g, "betweenness", 3)["ranking"]
+        -> paymentservice, checkoutservice, fraud-check (highest first)
     """
     if metric == "pagerank":
         cypher = ("CALL algo.pageRank('Service', 'DEPENDS_ON') YIELD node, score "
@@ -145,9 +256,21 @@ def critical_services(g, metric="betweenness", limit=5):
 
 
 def who_to_page(g, service):
-    """Owning team and its on-call person for `service`.
+    """Find the team that owns `service` and who on that team is on call.
 
+    Usually the agent's last call, once it has found the root-cause service.
     OPTIONAL MATCH keeps the team in the answer even if nobody is on call.
+
+    Args:
+        g: FalkorDB Graph handle.
+        service: Name of the root-cause service, e.g. "fraud-check".
+
+    Returns:
+        {"service": str, "team": str, "on_call": str or None, "cypher": str}
+        or the _check_service error dict for an unknown name.
+
+    Example (Story A):
+        who_to_page(g, "fraud-check") -> team "Payments", on_call "Priya Nair"
     """
     if err := _check_service(g, service):
         return err

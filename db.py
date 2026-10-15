@@ -13,7 +13,17 @@ GRAPH_NAME = os.environ.get("GRAPH_NAME", "incidents")
 
 
 def get_graph(name=GRAPH_NAME):
-    """Connect to FalkorDB and return a handle to the graph called `name`."""
+    """Connect to FalkorDB and return a handle to one graph.
+
+    Selecting a graph that does not exist yet is fine; FalkorDB creates it on
+    the first write (seed.py does that).
+
+    Args:
+        name: Graph name. Defaults to GRAPH_NAME.
+
+    Returns:
+        falkordb.Graph, used for .query() (writes, seed only) and .ro_query().
+    """
     # Defaults to local Docker so tests never touch the Cloud instance by accident.
     # The Cloud URL lives in .env as FALKORDB_CLOUD_URL and must be passed in on purpose.
     url = os.environ.get("FALKORDB_URL", "falkor://localhost:6379")

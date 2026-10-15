@@ -119,10 +119,19 @@ PEOPLE = {
 
 
 def build_rows(now_ms):
-    """Return (deploys, alerts) as lists of dicts, with times relative to `now_ms`.
+    """Generate the deploy and alert rows, with times relative to `now_ms`.
 
-    Background noise comes first, then the hand-written story events. The
-    background is kept older than 2 hours so the "last hour" only shows the story.
+    Background noise comes first (random but repeatable, fixed seed 42), then
+    the hand-written story events. The background is kept older than 2 hours so
+    the "last hour" only shows the story.
+
+    Args:
+        now_ms: Reference time in epoch milliseconds.
+
+    Returns:
+        (deploys, alerts):
+          deploys: [{"id", "service", "version", "ts", "status", "by"}, ...]  41 rows
+          alerts:  [{"id", "service", "severity", "message", "ts", "resolved"}, ...]  14 rows
     """
     rng = random.Random(42)  # fixed seed: same graph every run
     owner = {s: t for t, svcs in TEAMS.items() for s in svcs}
@@ -168,10 +177,21 @@ def build_rows(now_ms):
 
 
 def seed(g, now_ms=None):
-    """Delete graph `g`, rebuild it, and return the `now_ms` the data is anchored to.
+    """Delete graph `g` and rebuild it from scratch.
 
     Each node type is created in one UNWIND query (one round trip per type),
     which builds the whole graph in well under a second, even on Cloud.
+
+    Args:
+        g: FalkorDB Graph handle (any name; tests use throwaway graphs).
+        now_ms: Time the story is anchored to, in epoch ms. Defaults to now.
+
+    Returns:
+        The `now_ms` used, so callers (tests, re-seed logic) can compute
+        "minutes ago" against the same reference.
+
+    Raises:
+        RuntimeError: if the built graph is not one connected component.
     """
     now_ms = now_ms or int(time.time() * 1000)
     deploys, alerts = build_rows(now_ms)
