@@ -1,0 +1,7 @@
+.env
+graph-hacks-env/
+__pycache__/
+design-mock/
+.playwright/
+.playwright-cli/
+.claude/
