@@ -1,6 +1,11 @@
+# Secrets: API keys and the FalkorDB Cloud URL. Never commit.
 .env
+
+# Local Python virtual environment and bytecode.
 graph-hacks-env/
 __pycache__/
+
+# Local-only design work and tool state.
 design-mock/
 .playwright/
 .playwright-cli/

@@ -1,8 +1,19 @@
+# Pinned versions, all tested together on Python with FalkorDB v4.22.0.
+
+# Graph database client (FalkorDB speaks the Redis protocol, hence redis).
 falkordb==1.7.1
 redis==8.1.0
+
+# Web API and server.
 fastapi==0.143.0
 uvicorn==0.54.0
+
+# LLM calls via any OpenAI-compatible endpoint (OpenRouter, Groq, Gemini, Mistral).
 openai==3.29.0
+
+# Loads API keys and the FalkorDB URL from .env.
 python-dotenv==1.2.4
+
+# Tests (httpx is used by FastAPI's test client).
 pytest==9.1.1
 httpx==0.28.1

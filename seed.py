@@ -4,6 +4,23 @@ Topology is based on Google's public Online Boutique demo plus synthetic service
 All people, deploys and alerts are synthetic. Times are relative to "now" so the
 demo incident is always recent.
 
+Graph model:
+  (:Service {name, tier, criticality})
+  (:Service)-[:DEPENDS_ON {weight}]->(:Service)   caller -> callee, weight = latency ms
+  (:Team {name})-[:OWNS]->(:Service)
+  (:Person {name, on_call})-[:MEMBER_OF]->(:Team)
+  (:Person)-[:DEPLOYED]->(:Deploy {id, version, ts, status})-[:TO]->(:Service)
+  (:Alert {id, severity, message, ts, resolved})-[:FIRED_ON]->(:Service)
+All `ts` values are integer epoch milliseconds.
+
+Demo stories built into the data:
+  A  fraud-check v3.1.0 deployed 14 min ago -> payments-db CPU -> paymentservice
+     latency -> checkoutservice 5xx. Root cause: the deploy. Page Payments on-call.
+  B  "Which services are chokepoints?" answered by betweenness / PageRank.
+  C  adservice alert at the same time is a red herring: no path to checkout.
+
+Running this script deletes and rebuilds the graph.
+
 Usage:
   python seed.py                                    # local Docker
   FALKORDB_URL=$FALKORDB_CLOUD_URL python seed.py   # FalkorDB Cloud
@@ -15,6 +32,7 @@ from redis.exceptions import ResponseError
 
 from db import get_graph
 
+# Time units in milliseconds, matching the epoch-ms timestamps in the graph.
 MIN = 60_000
 HOUR = 60 * MIN
 DAY = 24 * HOUR
@@ -45,7 +63,8 @@ SERVICES = [
     ("session-cache", "data", 2),
 ]
 
-# caller -> callee, weight = typical latency in ms (used by algo.SPpaths)
+# caller -> callee, weight = typical latency in ms (used by algo.SPpaths).
+# The longest chain is 6 hops; tools.MAX_HOPS must stay at or above it.
 DEPENDS_ON = [
     # Online Boutique core (from kubernetes-manifests *_ADDR env vars)
     ("frontend", "adservice", 15),
@@ -78,6 +97,7 @@ DEPENDS_ON = [
     ("shippingservice", "orders-db", 5),
 ]
 
+# Team -> services it owns. Every service has exactly one owner.
 TEAMS = {
     "Storefront": ["api-gateway", "frontend", "adservice", "recommendation"],
     "Checkout": ["checkoutservice", "cartservice", "redis-cart", "emailservice"],
@@ -99,6 +119,11 @@ PEOPLE = {
 
 
 def build_rows(now_ms):
+    """Return (deploys, alerts) as lists of dicts, with times relative to `now_ms`.
+
+    Background noise comes first, then the hand-written story events. The
+    background is kept older than 2 hours so the "last hour" only shows the story.
+    """
     rng = random.Random(42)  # fixed seed: same graph every run
     owner = {s: t for t, svcs in TEAMS.items() for s in svcs}
 
@@ -143,6 +168,11 @@ def build_rows(now_ms):
 
 
 def seed(g, now_ms=None):
+    """Delete graph `g`, rebuild it, and return the `now_ms` the data is anchored to.
+
+    Each node type is created in one UNWIND query (one round trip per type),
+    which builds the whole graph in well under a second, even on Cloud.
+    """
     now_ms = now_ms or int(time.time() * 1000)
     deploys, alerts = build_rows(now_ms)
     try:
@@ -150,31 +180,37 @@ def seed(g, now_ms=None):
     except ResponseError:
         pass  # graph did not exist yet
 
+    # Indexes on the lookup keys: names for MATCH by name, ts for time-range filters.
     for label, prop in [("Service", "name"), ("Team", "name"), ("Person", "name"),
                         ("Deploy", "ts"), ("Alert", "ts")]:
         g.query(f"CREATE INDEX FOR (n:{label}) ON (n.{prop})")
 
+    # Services, then the dependency edges between them.
     g.query("UNWIND $rows AS r CREATE (:Service {name: r[0], tier: r[1], criticality: r[2]})",
             {"rows": [list(s) for s in SERVICES]})
     g.query("""UNWIND $rows AS r
                MATCH (a:Service {name: r[0]}), (b:Service {name: r[1]})
                CREATE (a)-[:DEPENDS_ON {weight: r[2]}]->(b)""",
             {"rows": [list(e) for e in DEPENDS_ON]})
+    # Teams and the services they own.
     g.query("""UNWIND $rows AS r
                CREATE (t:Team {name: r.team})
                WITH t, r UNWIND r.services AS s
                MATCH (svc:Service {name: s}) CREATE (t)-[:OWNS]->(svc)""",
             {"rows": [{"team": t, "services": s} for t, s in TEAMS.items()]})
+    # People; the first person listed in each team is on call.
     g.query("""UNWIND $rows AS r
                MATCH (t:Team {name: r.team})
                CREATE (:Person {name: r.name, on_call: r.on_call})-[:MEMBER_OF]->(t)""",
             {"rows": [{"team": t, "name": p, "on_call": i == 0}
                       for t, ps in PEOPLE.items() for i, p in enumerate(ps)]})
+    # Deploys: who deployed which version of which service, and when.
     g.query("""UNWIND $rows AS r
                MATCH (s:Service {name: r.service}), (p:Person {name: r.by})
                CREATE (p)-[:DEPLOYED]->(:Deploy {id: r.id, version: r.version, ts: r.ts,
                                                  status: r.status})-[:TO]->(s)""",
             {"rows": deploys})
+    # Alerts, each attached to the service it fired on.
     g.query("""UNWIND $rows AS r
                MATCH (s:Service {name: r.service})
                CREATE (:Alert {id: r.id, severity: r.severity, message: r.message,
@@ -182,6 +218,8 @@ def seed(g, now_ms=None):
             {"rows": alerts})
 
     # Sanity check: every node must be connected to the rest of the graph.
+    # WCC = weakly connected components; a typo in a name above would leave an
+    # orphan node and show up here as a second component.
     components = g.ro_query("CALL algo.WCC(null) YIELD componentId "
                             "RETURN count(DISTINCT componentId)").result_set[0][0]
     if components != 1:
@@ -190,6 +228,7 @@ def seed(g, now_ms=None):
 
 
 if __name__ == "__main__":
+    # Seed the graph named by GRAPH_NAME and print node counts per label.
     g = get_graph()
     seed(g)
     counts = g.ro_query("MATCH (n) RETURN labels(n)[0] AS label, count(n) ORDER BY label").result_set
