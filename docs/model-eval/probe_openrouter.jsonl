@@ -1,0 +1,18 @@
+{"provider": "openrouter", "model": "cohere/north-mini-code:free", "status": "ok", "headers": {}, "seconds": 1.3}
+{"provider": "openrouter", "model": "dots-studio/dots-3-note-preview:free", "status": "ok", "headers": {}, "seconds": 2.3}
+{"provider": "openrouter", "model": "google/gemma-4-26b-a4b-it:free", "status": "error 429 RateLimitError", "detail": "Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {'raw': 'google/gemma-4-26b-a4b-it:free is temporarily rate-limited upstream. Please retry shortly, or add y", "headers": {}, "seconds": 0.5}
+{"provider": "openrouter", "model": "google/gemma-4-31b-it:free", "status": "error 429 RateLimitError", "detail": "Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {'raw': 'google/gemma-4-31b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your ", "headers": {}, "seconds": 0.9}
+{"provider": "openrouter", "model": "google/lyria-3-clip-preview", "status": "skipped (not a chat model)"}
+{"provider": "openrouter", "model": "google/lyria-3-pro-preview", "status": "skipped (not a chat model)"}
+{"provider": "openrouter", "model": "liquid/lfm-2.5-2.6b:free", "status": "ok", "headers": {}, "seconds": 1.4}
+{"provider": "openrouter", "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "status": "ok", "headers": {}, "seconds": 4.7}
+{"provider": "openrouter", "model": "nvidia/nemotron-3-super-120b-a12b:free", "status": "ok", "headers": {}, "seconds": 2.2}
+{"provider": "openrouter", "model": "nvidia/nemotron-3-ultra-550b-a55b:free", "status": "error  APITimeoutError", "detail": "Request timed out.", "headers": {}, "seconds": 60.0}
+{"provider": "openrouter", "model": "nvidia/nemotron-3.5-content-safety:free", "status": "skipped (not a chat model)"}
+{"provider": "openrouter", "model": "nvidia/nemotron-3.5-lightning:free", "status": "ok", "headers": {}, "seconds": 108.7}
+{"provider": "openrouter", "model": "nvidia/nemotron-3.5-super-vl:free", "status": "ok", "headers": {}, "seconds": 10.5}
+{"provider": "openrouter", "model": "openrouter/free", "status": "ok", "headers": {}, "seconds": 1.0}
+{"provider": "openrouter", "model": "poolside/laguna-s-2.1:free", "status": "ok", "headers": {}, "seconds": 1.5}
+{"provider": "openrouter", "model": "poolside/laguna-xs-2.1:free", "status": "error 429 RateLimitError", "detail": "Error code: 429 - {'error': {'message': 'Provider returned error', 'code': 429, 'metadata': {'raw': 'poolside/laguna-xs-2.1:free is temporarily rate-limited upstream. Please retry shortly, or add your", "headers": {}, "seconds": 0.4}
+{"provider": "openrouter", "model": "thinkingmachines/inkling-small:free", "status": "error 403 PermissionDeniedError", "detail": "Error code: 403 - {'error': {'message': 'thinkingmachines/inkling-small:free is only available on agentic harnesses. Try plugging it into a coding agent or productivity app listed on https://openroute", "headers": {}, "seconds": 0.1}
+{"provider": "openrouter", "model": "thinkingmachines/inkling:free", "status": "error 403 PermissionDeniedError", "detail": "Error code: 403 - {'error': {'message': 'thinkingmachines/inkling:free is only available on agentic harnesses. Try plugging it into a coding agent or productivity app listed on https://openrouter.ai/a", "headers": {}, "seconds": 0.1}

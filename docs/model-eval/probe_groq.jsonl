@@ -1,0 +1,11 @@
+{"provider": "groq", "model": "allam-2-7b", "status": "error 400 BadRequestError", "detail": "Error code: 400 - {'error': {'message': '`tool calling` is not supported with this model', 'type': 'invalid_request_error', 'param': 'tool calling'}}", "headers": {}, "seconds": 0.2}
+{"provider": "groq", "model": "canopylabs/orpheus-arabic-saudi", "status": "skipped (not a chat model)"}
+{"provider": "groq", "model": "canopylabs/orpheus-v1-english", "status": "skipped (not a chat model)"}
+{"provider": "groq", "model": "meta-llama/llama-prompt-guard-2-22m", "status": "skipped (not a chat model)"}
+{"provider": "groq", "model": "meta-llama/llama-prompt-guard-2-86m", "status": "skipped (not a chat model)"}
+{"provider": "groq", "model": "openai/gpt-oss-120b", "status": "ok", "headers": {"x-ratelimit-limit-requests": "1000", "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-requests": "976", "x-ratelimit-remaining-tokens": "7567", "x-ratelimit-reset-requests": "34m33.6s", "x-ratelimit-reset-tokens": "3.247s"}, "seconds": 0.6}
+{"provider": "groq", "model": "openai/gpt-oss-20b", "status": "ok", "headers": {"x-ratelimit-limit-requests": "1000", "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-requests": "981", "x-ratelimit-remaining-tokens": "7567", "x-ratelimit-reset-requests": "27m21.6s", "x-ratelimit-reset-tokens": "3.247s"}, "seconds": 0.6}
+{"provider": "groq", "model": "openai/gpt-oss-safeguard-20b", "status": "skipped (not a chat model)"}
+{"provider": "groq", "model": "qwen/qwen3.8-27b", "status": "ok", "headers": {"x-ratelimit-limit-requests": "1000", "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-requests": "977", "x-ratelimit-remaining-tokens": "7417", "x-ratelimit-reset-requests": "33m7.2s", "x-ratelimit-reset-tokens": "4.372s"}, "seconds": 0.2}
+{"provider": "groq", "model": "whisper-large-v3", "status": "skipped (not a chat model)"}
+{"provider": "groq", "model": "whisper-large-v3-turbo", "status": "skipped (not a chat model)"}

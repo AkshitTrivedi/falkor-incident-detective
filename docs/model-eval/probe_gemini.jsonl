@@ -1,0 +1,63 @@
+{"provider": "gemini", "model": "antigravity-preview-05-2026", "status": "error 400 BadRequestError", "detail": "Error code: 400 - [{'error': {'code': 400, 'message': 'Function calling is not enabled for models/antigravity-preview-05-2026', 'status': 'INVALID_ARGUMENT'}}]", "headers": {}, "seconds": 1.1}
+{"provider": "gemini", "model": "antigravity-preview-09-2026", "status": "error 400 BadRequestError", "detail": "Error code: 400 - [{'error': {'code': 400, 'message': 'Function calling is not enabled for models/antigravity-preview-09-2026', 'status': 'INVALID_ARGUMENT'}}]", "headers": {}, "seconds": 0.8}
+{"provider": "gemini", "model": "antigravity-preview-latest", "status": "error 400 BadRequestError", "detail": "Error code: 400 - [{'error': {'code': 400, 'message': 'Function calling is not enabled for models/antigravity-preview-latest', 'status': 'INVALID_ARGUMENT'}}]", "headers": {}, "seconds": 0.8}
+{"provider": "gemini", "model": "aqa", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "deep-research-max-preview-04-2026", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "deep-research-preview-04-2026", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "deep-research-pro-preview-12-2025", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-2.5-computer-use-preview-10-2025", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-2.5-flash", "status": "error 404 NotFoundError", "detail": "Error code: 404 - [{'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.8-flash for the latest fea", "headers": {}, "seconds": 0.4}
+{"provider": "gemini", "model": "gemini-2.5-flash-image", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-2.5-flash-lite", "status": "error 404 NotFoundError", "detail": "Error code: 404 - [{'error': {'code': 404, 'message': 'This model models/gemini-2.5-flash-lite is no longer available to new users. Please update your code to use models/gemini-3.5-flash-lite for the ", "headers": {}, "seconds": 0.5}
+{"provider": "gemini", "model": "gemini-2.5-flash-native-audio-latest", "status": "error 400 BadRequestError", "detail": "Error code: 400 - [{'error': {'code': 400, 'message': 'models/gemini-2.5-flash-native-audio-latest only supports real-time bidirectional streaming via WebSocket (bidiGenerateContent). Please use the G", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-2.5-flash-native-audio-preview-09-2025", "status": "error 400 BadRequestError", "detail": "Error code: 400 - [{'error': {'code': 400, 'message': 'models/gemini-2.5-flash-native-audio-preview-09-2025 only supports real-time bidirectional streaming via WebSocket (bidiGenerateContent). Please ", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-2.5-flash-native-audio-preview-12-2025", "status": "error 400 BadRequestError", "detail": "Error code: 400 - [{'error': {'code': 400, 'message': 'models/gemini-2.5-flash-native-audio-preview-12-2025 only supports real-time bidirectional streaming via WebSocket (bidiGenerateContent). Please ", "headers": {}, "seconds": 0.4}
+{"provider": "gemini", "model": "gemini-2.5-flash-preview-tts", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-2.5-pro", "status": "error 404 NotFoundError", "detail": "Error code: 404 - [{'error': {'code': 404, 'message': 'This model models/gemini-2.5-pro is no longer available to new users. Please update your code to use models/gemini-3.1-pro-preview for the latest", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-2.5-pro-preview-tts", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3-flash-preview", "status": "ok", "headers": {}, "seconds": 17.4}
+{"provider": "gemini", "model": "gemini-3-pro-image", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3-pro-image-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.1-flash-image", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.1-flash-image-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.1-flash-lite", "status": "ok", "headers": {}, "seconds": 1.0}
+{"provider": "gemini", "model": "gemini-3.1-flash-lite-image", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.1-flash-lite-preview", "status": "ok", "headers": {}, "seconds": 1.4}
+{"provider": "gemini", "model": "gemini-3.1-flash-live-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.1-flash-tts-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.1-pro-preview", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.4}
+{"provider": "gemini", "model": "gemini-3.1-pro-preview-customtools", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.5}
+{"provider": "gemini", "model": "gemini-3.5-flash", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.4}
+{"provider": "gemini", "model": "gemini-3.5-flash-lite", "status": "ok", "headers": {}, "seconds": 1.0}
+{"provider": "gemini", "model": "gemini-3.5-live-translate-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.5-transcribe", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.5-transcribe-live", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.6-flash", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-3.7-flash", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-3.8-flash", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-3.8-flash-lite-tts", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.8-flash-tts", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.8-live", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-3.8-live-extended-thinking", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-4-argon", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-embedding-001", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-embedding-2", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-embedding-2-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-flash-latest", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-flash-lite-latest", "status": "ok", "headers": {}, "seconds": 1.3}
+{"provider": "gemini", "model": "gemini-nano-banana-2.1", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-omni-1.1-flash", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.4}
+{"provider": "gemini", "model": "gemini-omni-flash-preview", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.4}
+{"provider": "gemini", "model": "gemini-pro-latest", "status": "error 429 RateLimitError", "detail": "Error code: 429 - [{'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/g", "headers": {}, "seconds": 0.3}
+{"provider": "gemini", "model": "gemini-robotics-er-2-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemini-robotics-er-2-streaming-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "gemma-4-26b-a4b-it", "status": "ok", "headers": {}, "seconds": 2.4}
+{"provider": "gemini", "model": "gemma-4-31b-it", "status": "error  APITimeoutError", "detail": "Request timed out.", "headers": {}, "seconds": 60.0}
+{"provider": "gemini", "model": "lyria-3-clip-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "lyria-3-pro-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "lyria-3.5", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "lyria-realtime-exp", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "nano-banana-pro-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "veo-3.1-fast-generate-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "veo-3.1-generate-preview", "status": "skipped (not a chat model)"}
+{"provider": "gemini", "model": "veo-3.1-lite-generate-preview", "status": "skipped (not a chat model)"}
