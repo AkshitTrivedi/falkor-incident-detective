@@ -53,6 +53,21 @@ def test_unknown_service_must_be_called_out():
     assert _check("L")(_out("blast_radius"), _normalise(bad)) != []
 
 
+def test_unknown_service_real_wordings_pass():
+    """L: real answers from the 15-question run that say "not there" in other words pass.
+
+    A "did you mean one of these?" reply never says the service is missing, so it fails.
+    """
+    for good in ["Sorry, I don't know about a service called 'billing-service'.",
+                 "**billing-service** isn't in the service graph.",
+                 "There is no `billing-service` in the graph. The closest match is paymentservice.",
+                 "I don't have a service named **billing-service** in the system.",
+                 "I don’t have a service named **billing-service** in the graph."]:
+        assert _check("L")(_out("blast_radius"), _normalise(good)) == [], good
+    vague = "It looks like you meant one of these services. Which one are you asking about?"
+    assert _check("L")(_out("blast_radius"), _normalise(vague)) != []
+
+
 def test_invented_cpu_figure_fails():
     """M: admitting there is no CPU data passes; a made-up percentage fails."""
     good = "I don't have access to real-time CPU metrics for frontend."

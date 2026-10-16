@@ -100,6 +100,40 @@ Read by hand: Codestral's answers are complete and precise (root cause, version,
 | NVIDIA `meta/llama-3.2-11b-vision-instruct` | 0/9 | supports only one tool call at a time; wrong answers |
 | NVIDIA `glm-5.3`, `deepseek-v4.1-flash`, `kimi-k2.6`; Mistral `mistral-small-latest`; OpenRouter `gemma-4-31b-it:free`, `inkling:free` | 0/3 | timed out, no quota, or not enabled for our account |
 
+## Stage 3: the 15-question test
+
+Three questions show that a model *can* do the job. To check that it does the job *every time*, the six best models from Stage 2 answered **15 questions, 3 rounds each (45 answers per model)**: the three demo questions plus twelve more (`python bakeoff.py --set all --repeat 3`).
+
+| | Question | Correct only if the answer… |
+|---|---|---|
+| D | *What does checkoutservice depend on?* | lists its six direct dependencies |
+| E | *If payments-db goes down, which services are affected?* | names everything upstream of payments-db |
+| F | *What changed in the last hour?* | names fraud-check **v3.1.0** by Daniel Okafor |
+| G | *Show me how a request to api-gateway reaches feature-store.* | gives the 6-hop chain |
+| H | *Fastest call path from checkoutservice to payments-db, and how long?* | gives the path via paymentservice and **36 ms** |
+| I | *Which services are the most important by PageRank?* | ranks inventory-db first |
+| J | *Who owns risk-model and who is on call for it?* | Platform/Data, Aisha Bello |
+| K | *The adservice alert needs a human. Who should I page?* | Maya Chen (Storefront), not Payments |
+| L | *What depends on billing-service?* | says **billing-service doesn't exist** instead of inventing callers |
+| M | *What is the current CPU usage of frontend?* | says **the graph has no CPU data** instead of inventing a number |
+| N | *Does cartservice depend on payments-db?* | says no, after a graph check |
+| O | *Customers can't complete orders since a few minutes ago. Who do I wake up?* | Story A with no service named: still fraud-check and Priya Nair |
+
+L, M and N are trap questions: the right answer is "no" or "I don't know", and a model that wants to be helpful will make something up.
+
+| Model | Correct | Errors | Median s | Avg s | Slowest s | What went wrong (every failed answer read by hand) |
+|---|---|---|---|---|---|---|
+| Groq `qwen/qwen3.8-27b` | **45/45** | 0 | 8.6 | 10.5 | 27.0 | nothing |
+| NVIDIA `nvidia/nemotron-3-super-120b-a12b` | **45/45** | 0 | 8.1 | 19.8 | 92.0 | nothing, but some answers take over a minute |
+| NVIDIA `stepfun-ai/step-5-preview` | 43/45 | 0 | 5.7 | 8.0 | 32.2 | once left out that adservice is unrelated; once gave hops instead of the 36 ms time |
+| Gemini `gemini-3.1-flash-lite` | 37/45 | 8 | 7.0 | 20.4 | 203.7 | all 8 failures were Google 503 "model overloaded" errors; **every answer it gave was correct** |
+| Mistral `codestral-2508` | 37/45 | 0 | **1.9** | 2.0 | 4.1 | **blamed a deploy that doesn't exist** ("paymentservice deploy by Priya Nair") on O in all 3 rounds; refused H twice; left out the version on F |
+| Mistral `ministral-3b-2512` | 36/45 | 0 | 1.8 | 2.2 | 4.4 | asked "did you mean…?" instead of saying billing-service doesn't exist; refused M; once didn't call `who_to_page` |
+
+**What this changed:** Codestral was 9/9 on the demo questions and the fastest model, so it topped the Stage 2 shortlist. Given a vaguer question, it named a root cause that the graph does not contain, every time. For an on-call agent that is the worst possible mistake, so Codestral is not in the chain.
+
+**Grader fixes found by reading answers:** two correct wordings were first marked wrong: curly apostrophes (`don’t`) and phrasings like "isn't in the service graph". Both are fixed in `bakeoff.py` with tests in `tests/test_bakeoff.py`. Re-grading the Stage 2 runs with the fixed checks changed no scores.
+
 ## Free-tier limits we hit
 
 | Provider | What our key got | Source |
@@ -116,15 +150,14 @@ Groq's limits were also checked against its [deprecations page](https://console.
 
 The agent tries a **fallback chain**: if a model is rate-limited, slow or down, the same question goes to the next one. One question is always answered by one model; answers are never mixed.
 
-Shortlist from this evaluation (all 100% correct, spread across providers so one outage or quota can't stop the demo):
+The chain in [`agent.py`](../agent.py) (`FALLBACK_CHAIN`), chosen from the 15-question test:
 
-1. Mistral `codestral-2508`: fastest, and the largest free limits by far
-2. Groq `qwen/qwen3.8-27b`: most runs at 100%, very fast between rate-limit waits
-3. Gemini `gemini-3.1-flash-lite`: fewest tokens per question, stable model
-4. NVIDIA `stepfun-ai/step-5-preview`: correct every time, ~11 s
-5. NVIDIA `nemotron-3-super-120b-a12b`: correct every time, slowest
+1. Groq `qwen/qwen3.8-27b`: 45/45, typically 8.6 s
+2. Gemini `gemini-3.1-flash-lite`: every answer it gave was correct; when Google is overloaded (503), the question simply moves down the chain
+3. NVIDIA `stepfun-ai/step-5-preview`: 43/45, the fastest of the accurate models (5.7 s)
+4. NVIDIA `nemotron-3-super-120b-a12b`: 45/45 but sometimes over a minute, so last
 
-**Next:** a wider test of 10–15 questions on this shortlist before the chain in [`agent.py`](../agent.py) is finalised. Three questions show a model can do the job; fifteen show whether it does it every time.
+The first three are on different providers, so one outage or empty quota can't stop the demo. Groq's `gpt-oss-120b`, second in the earlier chain, was dropped: in Stage 2 it called paymentservice unrelated (9/12).
 
 ## Reproduce
 
@@ -140,13 +173,17 @@ python bakeoff.py --repeat 3 --pause 10 --out my-eval/bakeoff.jsonl \
 
 # Merge and re-grade every saved run into one table
 python -m scripts.summarize_results my-eval/bakeoff*.jsonl
-python -m scripts.summarize_results docs/model-eval/bakeoff_round*.jsonl   # our runs
+python -m scripts.summarize_results docs/model-eval/bakeoff_round*.jsonl   # our Stage 2 runs
+
+# Stage 3: 15 questions x 3 rounds (~45 min with the slow models)
+python bakeoff.py --set all --repeat 3 --pause 5 --out my-eval/15q.jsonl groq:qwen/qwen3.8-27b
+python -m scripts.summarize_results docs/model-eval/bakeoff_15q_*.jsonl     # our Stage 3 runs
 ```
 
 ## Caveats
 
 - **Free tiers change.** Models, quotas and speeds were measured on 16 Oct 2026 from India; your numbers will differ.
-- **Small sample.** 3–12 answers per model show who *can* do the job; the 10–15 question run checks consistency.
+- **Small sample.** 3–12 answers per model in Stage 2 show who *can* do the job; Stage 3's 45 answers per model check consistency, but on one graph and one set of stories.
 - **Grading is rule-based.** The checks look for the facts that matter (cause, version, person to page, wrong claims), not writing quality, so the top models' answers were also read by hand.
 - **Time includes waiting.** Times are wall-clock from question to answer, including any rate-limit waits the SDK does. That is what a user would experience.
 - **Round 1** (`bakeoff_round1.jsonl`) didn't record token counts.

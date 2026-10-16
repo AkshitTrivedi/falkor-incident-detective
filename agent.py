@@ -52,19 +52,21 @@ PROVIDERS = {
                "nvidia/nemotron-3-super-120b-a12b"),
 }
 
-# Models tried in order for each question, picked by the bake-off on
-# 2026-10-16 (DESIGN_NOTES §19). Groq limits each model separately (8k tokens
-# a minute), so the second Groq model is a fresh budget, not a shared one.
+# Models tried in order for each question, picked by the 15-question test on
+# 2026-10-16 (docs/MODEL_EVALUATION.md). Each entry is a different provider, so
+# one provider's outage or quota can't take out two links of the chain.
+# Codestral (fastest, 1.9 s) is left out on purpose: it blamed a deploy that
+# doesn't exist on question O in all 3 rounds.
 FALLBACK_CHAIN = [
-    # 9/9 correct, median 2.8 s, fewest tokens on Groq. Groq marks it "Preview"
-    # (can be withdrawn at short notice); if that happens, the next model answers.
+    # 45/45 correct, median 8.6 s (includes Groq's 8k tokens/min waits). Groq
+    # marks it "Preview"; if it is withdrawn, the next model answers.
     ("groq", "qwen/qwen3.8-27b"),
-    # Groq "Production" model, 7/9: right root cause and page every time, but it
-    # sometimes lists paymentservice's alert as unrelated (it is on the path).
-    ("groq", "openai/gpt-oss-120b"),
-    # 9/9, the only Gemini model that passed on the free tier; slower (2-34 s).
+    # Every answer it gave was correct (37/37), but 8 of 45 calls hit Google's
+    # 503 "overloaded"; a 503 simply moves the question down the chain.
     ("gemini", "gemini-3.1-flash-lite"),
-    # 9/9 but slow (6-79 s): last resort.
+    # 43/45, median 5.7 s; once left out "unrelated", once skipped the path tool.
+    ("nvidia", "stepfun-ai/step-5-preview"),
+    # 45/45 but slow (median 8.1 s, average 19.8 s, up to 92 s): last resort.
     ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
 ]
 

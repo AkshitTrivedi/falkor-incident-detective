@@ -55,6 +55,7 @@ def _normalise(answer):
     """
     for fancy, plain in (("‐", "-"), ("‑", "-"), (" ", " "), (" ", " ")):
         answer = answer.replace(fancy, plain)
+    answer = answer.replace("’", "'")  # curly apostrophe: "don’t" -> "don't"
     return answer.lower()
 
 
@@ -235,7 +236,10 @@ def check_k(out, a):
 # Phrases an answer uses when it says the graph does not have something.
 _NOT_FOUND = ("not found", "unknown", "doesn't exist", "does not exist", "no service",
               "not a known", "isn't a known", "not in the", "no such", "not exist",
-              "couldn't find", "could not find", "not recognised", "not recognized")
+              "couldn't find", "could not find", "not recognised", "not recognized",
+              "isn't in the", "is not in the", "don't know about", "do not know about",
+              "can't find", "cannot find", "no record of", "no billing-service",
+              "don't have a service", "do not have a service")
 _NO_DATA = ("don't have", "do not have", "not available", "isn't available", "cannot",
             "can't", "no data", "not tracked", "doesn't include", "does not include",
             "no metric", "not stored", "unable", "doesn't contain", "does not contain",
@@ -244,8 +248,9 @@ _NO_DATA = ("don't have", "do not have", "not available", "isn't available", "ca
 
 def check_l(out, a):
     """L: billing-service does not exist; the agent must say so, not invent callers."""
+    plain = re.sub(r"[`*]", "", a)  # "no `billing-service`" -> "no billing-service"
     return _failures([
-        (any(p in a for p in _NOT_FOUND), "did not say billing-service is unknown"),
+        (any(p in plain for p in _NOT_FOUND), "did not say billing-service is unknown"),
         _tool_used(out, "blast_radius", "dependencies", "dependency_path", "who_to_page"),
     ])
 
