@@ -4,6 +4,7 @@ A fake LLM (FakeLLM below) replays scripted replies, to test the tool loop and
 the fallback chain. Real models are checked by bakeoff.py, which needs API keys.
 """
 import inspect
+import time
 
 import httpx2  # the HTTP library openai uses; needed to build its error objects
 import openai
@@ -147,6 +148,62 @@ def test_tool_loop_with_fake_llm(g, fake_llms):
     assert out["fallbacks"] == []
 
 
+def test_supported_answer_is_not_retried(g, fake_llms):
+    """An answer that matches the tool results is returned as-is, with one check."""
+    fake_llms({"groq": FakeLLM(
+        _reply(tool_calls=[_tool_call("who_to_page", '{"service": "fraud-check"}')]),
+        _reply(content="Page: Payments team, on-call Priya Nair."))})
+    out = agent.investigate("Who do I page for fraud-check?", g=g)
+    assert out["check"] == {"problems": [], "retried": False, "by_rules": False}
+
+
+def test_unsupported_answer_gets_one_retry(g, fake_llms):
+    """Paging someone who_to_page did not return triggers one corrected answer."""
+    fake_llms({"groq": FakeLLM(
+        _reply(tool_calls=[_tool_call("who_to_page", '{"service": "fraud-check"}')]),
+        _reply(content="Page: Payments team, on-call Daniel Okafor."),
+        _reply(content="Page: Payments team, on-call Priya Nair."))})
+    out = agent.investigate("Who do I page for fraud-check?", g=g)
+    assert out["answer"] == "Page: Payments team, on-call Priya Nair."
+    assert out["check"]["retried"] and not out["check"]["by_rules"]
+    assert "daniel okafor" in out["check"]["problems"][0]
+    assert out["llm_calls"] == 3
+
+
+def test_failed_retry_falls_back_to_rules(g, fake_llms):
+    """If the retry is still wrong, the rules answer instead of the model."""
+    fake_llms({"groq": FakeLLM(
+        _reply(tool_calls=[_tool_call("who_to_page", '{"service": "fraud-check"}')]),
+        _reply(content="Page: Payments team, on-call Daniel Okafor."),
+        _reply(content="Page: Daniel Okafor again."))})
+    out = agent.investigate("Who do I page for fraud-check?", g=g)
+    assert out["check"]["by_rules"] and out["provider"] == "groq"
+    assert out["answer"].startswith("Diagnosis by rules")
+    assert "Page: Payments team, on call Priya Nair." in out["answer"]
+    # The trace shows the model's tool call, then the rules' own calls.
+    assert [s["tool"] for s in out["steps"]][:2] == ["who_to_page", "recent_changes"]
+
+
+def test_retry_error_falls_back_to_rules(g, fake_llms):
+    """A provider error during the retry goes to the rules, not to the next model."""
+    fake_llms({"groq": FakeLLM(
+                   _reply(tool_calls=[_tool_call("who_to_page", '{"service": "fraud-check"}')]),
+                   _reply(content="Page: Payments team, on-call Daniel Okafor."),
+                   _rate_limited()),
+               "gemini": FakeLLM()})  # would raise IndexError if it were called
+    out = agent.investigate("Who do I page for fraud-check?", g=g)
+    assert out["check"]["by_rules"] and out["provider"] == "groq"
+
+
+def test_no_final_answer_falls_back_to_rules(g, fake_llms):
+    """A model that only ever calls tools is stopped at max_steps; the rules answer."""
+    loop = [_reply(tool_calls=[_tool_call("recent_changes", "{}")]) for _ in range(2)]
+    fake_llms({"groq": FakeLLM(*loop)})
+    out = agent.investigate("checkoutservice is throwing 5xx errors. What broke?",
+                            g=g, max_steps=2)
+    assert out["check"]["by_rules"] and "fraud-check v3.1.0" in out["answer"]
+
+
 def test_rate_limited_model_falls_back_to_next(g, fake_llms):
     """A 429 from the first model restarts the question on the next one."""
     fake_llms({"groq": FakeLLM(_rate_limited()),
@@ -158,11 +215,61 @@ def test_rate_limited_model_falls_back_to_next(g, fake_llms):
     assert "RateLimitError" in out["fallbacks"][0]["error"]
 
 
-def test_last_model_error_is_raised(g, fake_llms):
-    """When every model in the chain fails, the last error reaches the caller."""
+def test_every_model_failing_falls_back_to_rules(g, fake_llms):
+    """When every model in the chain fails, the rules answer instead of an error."""
     fake_llms({"groq": FakeLLM(_rate_limited()), "gemini": FakeLLM(_rate_limited())})
-    with pytest.raises(openai.RateLimitError):
-        agent.investigate("What broke?", g=g)
+    out = agent.investigate("checkoutservice is throwing 5xx errors. What broke?", g=g)
+    assert out["provider"] == "rules" and out["llm_calls"] == 0
+    assert [f["provider"] for f in out["fallbacks"]] == ["groq", "gemini"]
+    assert "fraud-check v3.1.0" in out["answer"] and out["queries"]
+
+
+class SlowLLM(FakeLLM):
+    """A FakeLLM whose every reply takes `delay` seconds, like a stalled provider."""
+
+    def __init__(self, delay, *replies):
+        """Store the delay, then the replies as FakeLLM does."""
+        super().__init__(*replies)
+        self.delay = delay
+
+    def create(self, **kwargs):
+        """Sleep, then return the next reply."""
+        time.sleep(self.delay)
+        return super().create(**kwargs)
+
+
+def test_slow_model_hits_its_budget(g, fake_llms, monkeypatch):
+    """A model slower than MODEL_BUDGET_S is abandoned and the next one answers."""
+    monkeypatch.setattr(agent, "MODEL_BUDGET_S", 0.2)
+    fake_llms({"groq": SlowLLM(2, _reply(content="too late")),
+               "gemini": FakeLLM(_reply(content="Root cause: fraud-check"))})
+    started = time.time()
+    out = agent.investigate("What broke?", g=g)
+    assert out["provider"] == "gemini" and time.time() - started < 1.5
+    assert "APITimeoutError" in out["fallbacks"][0]["error"]
+
+
+def test_question_deadline_ends_with_rules(g, fake_llms, monkeypatch):
+    """Past QUESTION_DEADLINE_S the rules answer, even on the last model."""
+    monkeypatch.setattr(agent, "QUESTION_DEADLINE_S", 0.2)
+    fake_llms({"groq": SlowLLM(2, _reply(content="too late"))})
+    started = time.time()
+    out = agent.investigate("checkoutservice is throwing 5xx errors. What broke?", g=g)
+    assert out["provider"] == "rules" and time.time() - started < 1.5
+
+
+def test_stale_graph_is_reseeded(fake_llms):
+    """A graph seeded an hour ago is re-seeded before the question runs."""
+    graph = get_graph("incidents_agent_stale_test")
+    seed(graph, now_ms=int(time.time() * 1000) - 60 * 60_000)
+    try:
+        fake_llms({"groq": FakeLLM(
+            _reply(tool_calls=[_tool_call("recent_changes", "{}")]),
+            _reply(content="Root cause: fraud-check v3.1.0, deployed by Daniel Okafor."))})
+        out = agent.investigate("What broke?", g=graph)
+        assert out["steps"][0]["result"]["deploys"][0]["minutes_ago"] == 14
+    finally:
+        graph.delete()
 
 
 def test_explicit_provider_has_no_fallback(g, fake_llms):

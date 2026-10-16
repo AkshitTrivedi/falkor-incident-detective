@@ -380,9 +380,14 @@ def _ask(g, provider, model, round_no, story, question, check):
     try:
         out = investigate(question, g=g, provider=provider, model=model)
         failed = check(out, _normalise(out["answer"] or ""))
+        # The bake-off grades the model, so a rules answer (after the model's
+        # answer failed verify.py twice) counts against it even if it is right.
+        if out["check"]["by_rules"]:
+            failed = ["model answer failed the answer check; rules answered"] + failed
         row.update(passed=not failed, failed=failed, seconds=out["seconds"],
                    llm_calls=out["llm_calls"], tokens=out["tokens"],
-                   tools=[s["tool"] for s in out["steps"]], answer=out["answer"])
+                   tools=[s["tool"] for s in out["steps"]], answer=out["answer"],
+                   check=out["check"])  # verify.py's verdict, incl. retry and plain fallback
         status = "PASS" if not failed else "FAIL: " + "; ".join(failed)
         print(f"{label}  {out['seconds']}s  {len(out['steps'])} tools  "
               f"{sum(out['tokens'].values())} tokens  {status}", flush=True)

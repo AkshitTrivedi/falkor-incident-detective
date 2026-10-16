@@ -37,6 +37,15 @@ MIN = 60_000
 HOUR = 60 * MIN
 DAY = 24 * HOUR
 
+# How long before seeding the Story A deploy happened. It is always the newest
+# deploy in the graph (background deploys are 2h+ old), so the newest deploy's
+# timestamp tells ensure_fresh() when the graph was seeded.
+STORY_DEPLOY_AGO = 14 * MIN
+
+# The tools look back 60 minutes by default, so after about 46 minutes the
+# Story A deploy drops out of recent_changes(). Re-seed well before that.
+MAX_STORY_AGE_MIN = 30
+
 # name, tier, criticality (1 = highest)
 SERVICES = [
     ("api-gateway", "edge", 1),
@@ -159,7 +168,7 @@ def build_rows(now_ms):
 
     # Story A: bad deploy cascades up the payment chain.
     deploys.append({"id": "dep-story-a", "service": "fraud-check", "version": "v3.1.0",
-                    "ts": now_ms - 14 * MIN, "status": "success", "by": "Daniel Okafor"})
+                    "ts": now_ms - STORY_DEPLOY_AGO, "status": "success", "by": "Daniel Okafor"})
     alerts += [
         {"id": "alt-a1", "service": "payments-db", "severity": "critical",
          "message": "CPU 98%: slow query from fraud-check (no index)",
@@ -245,6 +254,31 @@ def seed(g, now_ms=None):
     if components != 1:
         raise RuntimeError(f"seeded graph has {components} components, expected 1")
     return now_ms
+
+
+def ensure_fresh(g, max_age_min=MAX_STORY_AGE_MIN):
+    """Re-seed graph `g` if it is empty or was seeded more than `max_age_min` ago.
+
+    The demo story is anchored to seed time, so an old graph shows "no recent
+    deploys" and the agent blames the wrong service (seen in testing after an
+    hour). Only for the synthetic demo graph: a real graph is never re-seeded.
+
+    Args:
+        g: FalkorDB Graph handle.
+        max_age_min: Oldest acceptable seed age, in minutes.
+
+    Returns:
+        True if the graph was re-seeded, False if it was fresh enough.
+    """
+    try:
+        newest = g.ro_query("MATCH (d:Deploy) RETURN max(d.ts)").result_set[0][0]
+    except ResponseError:
+        newest = None  # graph does not exist yet
+    now_ms = int(time.time() * 1000)
+    if newest is not None and now_ms - (newest + STORY_DEPLOY_AGO) <= max_age_min * MIN:
+        return False
+    seed(g, now_ms)
+    return True
 
 
 if __name__ == "__main__":

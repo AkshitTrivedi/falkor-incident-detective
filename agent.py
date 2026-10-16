@@ -5,6 +5,12 @@ How it works:
   2. The LLM sees the six tools from tools.py (as OpenAI function schemas) and
      picks one. We run it against FalkorDB and send the result back.
   3. Steps repeat until the LLM writes a final answer or MAX_STEPS is reached.
+  4. verify.check_answer() compares the answer with the tool results. If it
+     states anything the tools do not support, the LLM gets one chance to fix
+     it; if the fix fails too, the user gets diagnose.rule_answer(), worked out
+     by fixed rules with no model.
+  5. The same rules answer when every model fails or the question runs past
+     QUESTION_DEADLINE_S, so the user always gets an answer from the graph.
 
 The LLM never sees or writes Cypher; it can only call the fixed tools. Every
 step is logged with the Cypher that ran, so the answer can be traced back to
@@ -24,12 +30,17 @@ Usage:
 import json
 import os
 import sys
+import threading
 import time
 
+import httpx2  # the HTTP library openai uses; needed to build its timeout error
 from dotenv import load_dotenv
-from openai import APIError, OpenAI
+from openai import APIError, APITimeoutError, OpenAI
 
+import diagnose
+import seed
 import tools
+import verify
 from db import get_graph
 
 load_dotenv()
@@ -76,6 +87,13 @@ LLM_TIMEOUT_S = 60
 # Shorter wait for a model that has a fallback after it: a reply this slow
 # means the provider is struggling, and the next model is likely faster.
 FAILOVER_TIMEOUT_S = 20
+# Hard limits on wall-clock time. The timeouts above are per network read, so a
+# provider that trickles bytes can pass them: in testing one question took 946 s.
+# QUESTION_DEADLINE_S covers the whole question across every model; after it,
+# diagnose.rule_answer() answers. MODEL_BUDGET_S caps one model's whole
+# attempt when another model follows it.
+QUESTION_DEADLINE_S = 90
+MODEL_BUDGET_S = 30
 
 # The investigation procedure the LLM follows. Kept short: free tiers limit
 # tokens per minute, and this prompt is resent on every step.
@@ -97,6 +115,12 @@ Root cause: <service and change, with who deployed it and when>
 Evidence: <the dependency path and the alerts along it>
 Unrelated: <alerts on services outside the dependencies list, if any>
 Page: <team and on-call person>"""
+
+# Sent after an answer fails verify.check_answer(); {problems} is one per line.
+RETRY_PROMPT = """Your answer states things the tool results do not support:
+{problems}
+Rewrite the answer in the same format using only names, versions and people that appear in
+the tool results above. Do not call any more tools."""
 
 # OpenAI function-calling schemas for tools.TOOLS. Descriptions tell the LLM
 # when to use each tool; names must match the functions in tools.py.
@@ -236,7 +260,12 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
 
     Tries the models from model_chain() in order. If one fails (rate limit,
     timeout, outage, model withdrawn), the question restarts from scratch on
-    the next, so every answer comes from a single model.
+    the next, so every answer comes from a single model. If every model fails
+    or QUESTION_DEADLINE_S passes, diagnose.rule_answer() answers instead
+    (provider "rules").
+
+    The demo graph is re-seeded first if its story has gone stale
+    (seed.ensure_fresh); set AUTO_RESEED=0 to turn that off.
 
     Args:
         question: The user's question in plain English.
@@ -245,32 +274,44 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
         max_steps: Maximum number of LLM rounds per model.
 
     Returns:
-        {"answer": str,             final text from the LLM (or a stop message)
+        {"answer": str,             final text from the LLM, or from the rules
          "steps": [{"tool", "args", "result", "ms"}, ...],   in call order
          "queries": [str, ...],     every Cypher query that ran
          "path": [str, ...] or None, the last dependency path found, for the UI
-         "provider": str, "model": str,   the model that answered
+         "provider": str, "model": str,   the model that answered ("rules", None if none)
          "llm_calls": int,          LLM requests made by that model
          "tokens": {"prompt": int, "completion": int},   summed over those requests
+         "check": {"problems": [str, ...], "retried": bool, "by_rules": bool},
+                                    see _check(); problems are from the first answer
          "fallbacks": [{"provider", "model", "error"}, ...],   models that failed first
          "seconds": float}          total time, including failed attempts
 
     Raises:
         RuntimeError: no API key is set for any model in the chain.
-        openai.APIError: the last model in the chain failed too.
+        openai.APIError: only when one model was asked for (provider/model, as
+            the bake-off does) and it failed; the bake-off records the error.
     """
     g = g or get_graph()
+    if os.getenv("AUTO_RESEED", "1") == "1":
+        seed.ensure_fresh(g)
+    pinned = bool(provider or os.environ.get("LLM_PROVIDER"))
     chain = model_chain(provider, model)
     if not chain:
         raise RuntimeError("no LLM API key is set; add one of the keys in PROVIDERS to .env")
     started = time.time()
+    deadline = started + QUESTION_DEADLINE_S
     fallbacks = []
     for i, (p, m) in enumerate(chain):
         is_last = i == len(chain) - 1
+        if time.time() >= deadline:
+            fallbacks.append({"provider": p, "model": m, "error": "skipped: question deadline"})
+            continue
+        model_deadline = deadline if is_last else min(deadline, time.time() + MODEL_BUDGET_S)
         try:
-            out = _investigate_once(question, g, p, m, max_steps, fail_fast=not is_last)
+            out = _investigate_once(question, g, p, m, max_steps, fail_fast=not is_last,
+                                    deadline=model_deadline)
         except APIError as e:  # includes timeouts and connection errors
-            if is_last:
+            if pinned:
                 raise
             fallbacks.append({"provider": p, "model": m,
                               "error": f"{type(e).__name__}: {str(e)[:200]}"})
@@ -278,36 +319,51 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
         out.update(fallbacks=fallbacks, seconds=round(time.time() - started, 1))
         return out
 
+    # Every model failed or time ran out: answer from the graph with the rules.
+    rules = diagnose.rule_answer(g, question)
+    return {"answer": rules["answer"], "steps": rules["steps"],
+            "queries": _queries(rules["steps"]), "path": rules["path"],
+            "provider": "rules", "model": None, "llm_calls": 0,
+            "tokens": {"prompt": 0, "completion": 0},
+            "check": {"problems": [], "retried": False, "by_rules": True},
+            "fallbacks": fallbacks, "seconds": round(time.time() - started, 1)}
 
-def _investigate_once(question, g, provider, model, max_steps, fail_fast):
+
+def _queries(steps):
+    """Return every Cypher query that ran in `steps`, in order (for the UI trace)."""
+    out = []
+    for step in steps:
+        cypher = step["result"].get("cypher")
+        out += cypher if isinstance(cypher, list) else [cypher] if cypher else []
+    return out
+
+
+def _investigate_once(question, g, provider, model, max_steps, fail_fast, deadline=None):
     """Run the tool-calling loop on one model; helper for investigate().
 
     Args:
         question, g, max_steps: As for investigate().
         provider, model: The model to use (model None = the provider's default).
         fail_fast: Passed to make_client().
+        deadline: time.time() value by which this model must finish, or None.
 
     Returns:
         investigate()'s result, without "fallbacks" and "seconds".
 
     Raises:
-        openai.APIError: the provider failed (rate limit, timeout, outage...).
+        openai.APIError: the provider failed (rate limit, timeout, outage...),
+        or openai.APITimeoutError when `deadline` passed.
     """
     client, model = make_client(provider, model, fail_fast)
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": question}]
-    steps, queries, path = [], [], None
+    steps, path = [], None
     tokens = {"prompt": 0, "completion": 0}
     answer, llm_calls = None, 0
 
     for _ in range(max_steps):
-        response = client.chat.completions.create(
-            model=model, messages=messages, tools=TOOL_SCHEMAS, temperature=0)
+        reply = _ask(client, model, messages, tokens, deadline)
         llm_calls += 1
-        if response.usage:  # token counts; a few providers leave them out
-            tokens["prompt"] += response.usage.prompt_tokens or 0
-            tokens["completion"] += response.usage.completion_tokens or 0
-        reply = response.choices[0].message
 
         # No tool calls means the LLM has written its final answer.
         if not reply.tool_calls:
@@ -324,17 +380,127 @@ def _investigate_once(question, g, provider, model, max_steps, fail_fast):
             args, result = run_tool(g, tc.function.name, tc.function.arguments)
             steps.append({"tool": tc.function.name, "args": args, "result": result,
                           "ms": round((time.time() - t0) * 1000)})
-            cypher = result.get("cypher")
-            queries += cypher if isinstance(cypher, list) else [cypher] if cypher else []
             if tc.function.name == "dependency_path" and result.get("path"):
                 path = result["path"]
             messages.append({"role": "tool", "tool_call_id": tc.id,
                              "content": _for_llm(result)})
 
-    if answer is None:
-        answer = f"Stopped after {max_steps} steps without a final answer."
-    return {"answer": answer, "steps": steps, "queries": queries, "path": path,
-            "provider": provider, "model": model, "llm_calls": llm_calls, "tokens": tokens}
+    if answer is None:  # ran out of steps: treat like an answer that failed the check
+        check = {"problems": [f"no final answer after {max_steps} steps"],
+                 "retried": False, "by_rules": True}
+        answer, rule_steps, rule_path = _rules(g, question, steps)
+    else:
+        answer, check, rule_steps, rule_path = _check(
+            question, answer, steps, messages, g, client, model, tokens, deadline)
+        llm_calls += check["retried"]
+    steps += rule_steps  # the rules' own tool calls, so the trace shows them too
+    path = rule_path or path
+    return {"answer": answer, "steps": steps, "queries": _queries(steps), "path": path,
+            "provider": provider, "model": model, "llm_calls": llm_calls, "tokens": tokens,
+            "check": check}
+
+
+def _ask(client, model, messages, tokens, deadline=None):
+    """Send one chat request with the tool schemas; helper for _investigate_once().
+
+    Args:
+        client, model: From make_client().
+        messages: The conversation so far.
+        tokens: {"prompt": int, "completion": int}, updated in place.
+        deadline: time.time() value to give up at, or None for no limit.
+
+    Returns:
+        The reply message (openai ChatCompletionMessage).
+
+    Raises:
+        openai.APIError: the provider failed; APITimeoutError if `deadline` passed.
+    """
+    response = _within(deadline, lambda: client.chat.completions.create(
+        model=model, messages=messages, tools=TOOL_SCHEMAS, temperature=0))
+    if response.usage:  # token counts; a few providers leave them out
+        tokens["prompt"] += response.usage.prompt_tokens or 0
+        tokens["completion"] += response.usage.completion_tokens or 0
+    return response.choices[0].message
+
+
+def _within(deadline, call):
+    """Run `call()` but give up when `deadline` (a time.time() value) passes.
+
+    The openai client's own timeout is per network read, so it cannot stop a
+    reply that keeps trickling in. The call runs in a daemon thread; on
+    timeout it is abandoned (it can't be killed) and its result ignored.
+
+    Raises:
+        openai.APITimeoutError: the deadline passed first.
+        Anything `call()` raises.
+    """
+    if deadline is None:
+        return call()
+    box = {}
+
+    def run():
+        """Store call()'s result or exception in `box`."""
+        try:
+            box["value"] = call()
+        except BaseException as e:  # passed on to the caller below
+            box["error"] = e
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(max(0.0, deadline - time.time()))
+    if worker.is_alive():
+        raise APITimeoutError(request=httpx2.Request("POST", "https://llm.deadline/"))
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
+def _rules(g, question, steps):
+    """Answer with diagnose.rule_answer(); returns (answer, rule steps, path)."""
+    rules = diagnose.rule_answer(g, question, steps)
+    return rules["answer"], rules["steps"], rules["path"]
+
+
+def _check(question, answer, steps, messages, g, client, model, tokens, deadline=None):
+    """Check the final answer against the tool results; retry once if it fails.
+
+    Order: the model's answer -> one corrected answer from the same model ->
+    diagnose.rule_answer(), worked out by rules with no model. A provider
+    error or timeout during the retry also goes to the rules: the tool results
+    are in hand, so restarting on another model would only cost time (tested:
+    2.7 s this way vs 22-37 s restarting).
+
+    Args:
+        question, answer, steps: The question, the model's answer, its tool steps.
+        messages: The conversation so far; the retry is appended to it.
+        g: FalkorDB Graph handle, for verify.graph_vocabulary() and the rules.
+        client, model, tokens, deadline: As for _ask().
+
+    Returns:
+        (answer, check, rule_steps, rule_path): the answer to show;
+        {"problems": first answer's problems, "retried": bool, "by_rules": bool};
+        and the rules' tool steps and path ([] and None if they did not run).
+    """
+    vocab = verify.graph_vocabulary(g)
+    problems = verify.check_answer(answer, steps, question, vocab)
+    check = {"problems": problems, "retried": False, "by_rules": False}
+    if not problems:
+        return answer, check, [], None
+
+    check["retried"] = True
+    messages += [{"role": "assistant", "content": answer},
+                 {"role": "user", "content": RETRY_PROMPT.format(
+                     problems="\n".join(f"- {p}" for p in problems))}]
+    try:
+        reply = _ask(client, model, messages, tokens, deadline)
+        fixed = None if reply.tool_calls else reply.content
+    except APIError:
+        fixed = None
+    if fixed and not verify.check_answer(fixed, steps, question, vocab):
+        return fixed, check, [], None
+    check["by_rules"] = True
+    answer, rule_steps, rule_path = _rules(g, question, steps)
+    return answer, check, rule_steps, rule_path
 
 
 if __name__ == "__main__":
@@ -348,3 +514,9 @@ if __name__ == "__main__":
     for i, s in enumerate(out["steps"], 1):
         print(f"step {i}: {s['tool']}({json.dumps(s['args'])})  {s['ms']} ms")
     print("\n" + out["answer"])
+    if out["check"]["problems"]:  # the first answer failed verify.check_answer()
+        print("\n[answer check] first answer had: " + "; ".join(out["check"]["problems"]))
+        print("[answer check] " + ("answered by rules" if out["check"]["by_rules"]
+                                   else "fixed on retry"))
+    elif out["provider"] == "rules":
+        print("\n[answer check] no model answered in time; answered by rules")

@@ -3,10 +3,12 @@
 Runs against local FalkorDB (see db.py) on a throwaway graph that is deleted
 afterwards, so the real "incidents" graph is never touched.
 """
+import time
+
 import pytest
 
 from db import get_graph
-from seed import HOUR, seed
+from seed import HOUR, MIN, ensure_fresh, seed
 from tools import MAX_HOPS
 
 
@@ -78,3 +80,21 @@ def test_longest_chain_fits_hop_cap(g):
     longest = rows(g, "MATCH p = (:Service)-[:DEPENDS_ON*]->(:Service) "
                       "RETURN max(length(p))")[0][0]
     assert longest <= MAX_HOPS
+
+
+def test_ensure_fresh_reseeds_only_when_stale():
+    """A new or old graph is re-seeded; one seeded 10 minutes ago is left alone."""
+    graph = get_graph("incidents_fresh_test")
+    try:
+        graph.delete()
+    except Exception:
+        pass  # did not exist
+    try:
+        assert ensure_fresh(graph)  # no graph yet -> seeded
+        assert not ensure_fresh(graph)  # just seeded -> fresh
+        seed(graph, now_ms=int(time.time() * 1000) - 10 * MIN)
+        assert not ensure_fresh(graph)  # 10 min old, under the 30 min limit
+        seed(graph, now_ms=int(time.time() * 1000) - 45 * MIN)
+        assert ensure_fresh(graph)  # 45 min old -> re-seeded
+    finally:
+        graph.delete()
