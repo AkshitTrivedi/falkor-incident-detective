@@ -193,3 +193,15 @@ def test_summary_reads_unrelated_from_prose(g):
     assert s["unrelated"] == ["adservice"]
     assert "adservice" not in s["related"]
     assert "paymentservice" in s["related"]
+
+
+def test_summary_blames_nothing_when_the_cause_line_clears_the_deploy(g):
+    """C3, live Oct 16 (StepFun): the cause line names fraud-check v3.1.0 only
+    to say it has no dependency path to adservice; the card must not blame it."""
+    r = diagnose.rule_answer(g, QUESTION)
+    out = {"answer": "Root cause: No deploy or dependency in the graph explains the adservice "
+                     "cache miss rate. The only recent deploy, fraud-check v3.1.0 by Daniel "
+                     "Okafor, has no dependency path to or from adservice.",
+           "steps": r["steps"], "path": None}
+    s = app.summarize(out, verify.graph_vocabulary(g), "adservice cache miss rate is high. What broke?")
+    assert s["root_cause"] is None and s["no_cause"]

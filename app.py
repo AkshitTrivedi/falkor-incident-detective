@@ -262,10 +262,13 @@ def summarize(out, vocab, question=""):
     # The blamed deploy: one the tools returned whose version and service the
     # Root cause section names. If several match, the first (newest) wins.
     cause_text = verify._section(out["answer"].lower(), "root cause")
-    no_cause = bool(re.match(r"\W*(?:not found|none|unknown|no root cause|undetermined)",
-                             cause_text))
+    no_cause = bool(re.match(verify._NO_CAUSE, cause_text))
     if no_cause:
         cause_text = ""  # "Root cause: not found in the graph." blames nothing
+    # A sentence that clears a deploy ("fraud-check v3.1.0 ... has no
+    # dependency path to or from adservice") does not blame it (live C3).
+    cause_text = " ".join(sent for sent in re.split(r"(?<=[.!?])\s+|\n", cause_text)
+                          if not re.search(verify._CLEARS, sent))
     root = next((d for d in deploys
                  if d["version"].lower() in cause_text and d["service"].lower() in cause_text), None)
 

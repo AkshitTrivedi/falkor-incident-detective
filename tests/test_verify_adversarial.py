@@ -373,3 +373,14 @@ def test_empty_reply_with_no_tool_is_flagged(answer):
     """Rule 16, live Oct 16 (StepFun): replies that answer nothing."""
     assert any("no tool was called" in p
                for p in verify.check_answer(answer, [], "Is Omar on call for payments?", VOCAB))
+
+
+@pytest.mark.parametrize("answer,flagged", [
+    ("Root cause: fraud-check v3.1.0 deployed by Daniel Okafor.\nPage: Payments team.", True),
+    ("Yes, roll back fraud-check v3.1.0. Root cause: fraud-check v3.1.0.", False),
+    ("Rolling back fraud-check v3.1.0 should clear the payments-db alert.", False),
+])
+def test_rollback_question_needs_yes_or_no(answer, flagged):
+    """Rule 21, live Oct 16 (Nemotron): root cause given, rollback never answered."""
+    problems = verify.check_answer(answer, STEPS, "Should we roll back fraud-check v3.1.0?", VOCAB)
+    assert any("roll back" in p for p in problems) == flagged

@@ -53,6 +53,7 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
      graph's direction.
  19. A failure question that pages someone must have run recent_changes.
  20. "Most critical" must use the betweenness ranking.
+ 21. "Should we roll back X?" must be answered yes or no.
 
 Rules 11-14 need the denial in a sentence that names the thing: "adservice is
 not in the dependency path" does not deny that v2.0.0 exists (Gemini, Oct 17).
@@ -115,7 +116,8 @@ NOT_FOUND = ("not found", "unknown", "doesn't exist", "does not exist", "no serv
              "not a service", "no service named", "no service called", "not listed",
              "doesn't appear", "does not appear", "not present")
 # Rule 17: a Root cause section that blames nothing ("not found in the graph").
-_NO_CAUSE = r"\W*(?:not found|none|unknown|no root cause|undetermined)"
+_NO_CAUSE = (r"\W*(?:not found|none|unknown|no root cause|undetermined|"
+             r"no (?:recent )?(?:deploy|change)s? (?:or \w+ )?(?:in the graph )?explains?)")
 # Rule 19: words that report a failure (kept in step with diagnose._INCIDENT).
 _INCIDENT = (r"\b(?:broke|broken|error|errors|5xx|fail|failing|failed|failure|down|outage|"
              r"slow|latency|timeout|timeouts|crash\w*|degraded|not working|unavailable)\b")
@@ -647,6 +649,13 @@ def check_answer(answer, steps, question, vocab):
             and "who_to_page" in tools_run and "recent_changes" not in tools_run):
         problems.append("the question reports a failure, but recent_changes was not called, "
                         "so the page skips the cause")
+
+    # Rule 21: "should we roll back X?" needs a yes or a no. Live test, Oct 16
+    # (Nemotron) gave the root cause and never said whether to roll back.
+    if (re.search(r"\b(?:should|do|can) (?:we|i) (?:roll ?back|revert)\b", q)
+            and not re.search(r"\b(?:yes|no|roll(?:ing)? ?back|revert\w*|don't|do not)\b", plain)):
+        problems.append("the question asks whether to roll back, but the answer does not say "
+                        "yes or no")
 
     # Rule 20: "most critical" is ranked by betweenness. Live test, Oct 16
     # (Gemini) ranked by PageRank only and listed leaf databases.

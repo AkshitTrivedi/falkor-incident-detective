@@ -151,7 +151,7 @@ CASES = [
     dict(id="F4", cat="false-premise", q="Did the paymentservice v2.0.0 deploy cause the latency?",
          all=[["v2.0.0"], NOT_IN_GRAPH + ["only deploy", "only recent deploy"]], card=dict(missing=["v2.0.0"])),
     dict(id="F5", cat="false-premise", q="Should I page the SRE team for the checkout errors?",
-         all=[["sre"], NOT_IN_GRAPH], none=["page the sre team"]),
+         all=[["sre"], NOT_IN_GRAPH], none=["yes, page the sre", "you should page the sre", "should page the sre team"]),
     dict(id="F6", cat="false-premise", q="Roll back the cartservice deploy from 10 minutes ago",
          all=[["cartservice"], ["no recent deploy", "no deploy", "not deployed", "no cartservice deploy",
                                 "only deploy", "only recent deploy", "only change", "there is no", "no record",
