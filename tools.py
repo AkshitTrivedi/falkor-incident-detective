@@ -120,6 +120,7 @@ def dependencies(g, service):
 
     Returns:
         {"service": str,
+         "count": int,
          "depends_on": [{"service": str, "hops": int}, ...]  # nearest first
          "cypher": str}
         or the _check_service error dict for an unknown name.
@@ -136,7 +137,10 @@ def dependencies(g, service):
               "RETURN x.name, min(length(p)) AS hops ORDER BY hops, x.name")
     params = {"name": service}
     rows = _run(g, cypher, params)
-    return {"service": service, "depends_on": [{"service": n, "hops": h} for n, h in rows],
+    # "count" saves the model counting a long list: at 300 services one said
+    # 49 for a 47-row result (live test, seed.py --scale).
+    return {"service": service, "count": len(rows),
+            "depends_on": [{"service": n, "hops": h} for n, h in rows],
             "cypher": cypher, "params": params}
 
 
@@ -151,7 +155,7 @@ def blast_radius(g, service):
         service: Name of the service that might fail, e.g. "payments-db".
 
     Returns:
-        {"service": str,
+        {"service": str, "count": int,
          "affected": [{"service": str, "hops": int}, ...]  # nearest first
          "cypher": str}
         or the _check_service error dict for an unknown name.
@@ -166,7 +170,8 @@ def blast_radius(g, service):
               "RETURN x.name, min(length(p)) AS hops ORDER BY hops, x.name")
     params = {"name": service}
     rows = _run(g, cypher, params)
-    return {"service": service, "affected": [{"service": n, "hops": h} for n, h in rows],
+    return {"service": service, "count": len(rows),
+            "affected": [{"service": n, "hops": h} for n, h in rows],
             "cypher": cypher, "params": params}
 
 

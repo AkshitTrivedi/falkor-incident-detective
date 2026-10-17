@@ -478,3 +478,14 @@ def test_names_with_no_break_spaces_still_match():
     """gpt-oss writes "Priya Nair"; it is the same person."""
     answer = swap("Page: Payments team, on-call Priya Nair.", "Page: **Payments** team – Priya Nair")
     assert verify.check_answer(answer, STEPS, QUESTION, VOCAB) == []
+
+
+@pytest.mark.parametrize("count,flagged", [(49, True), (47, False)])
+def test_service_counts_must_match_a_returned_list(count, flagged):
+    """Rule 10c, live on the 300-service graph (StepFun): 49 for a 47-row list."""
+    steps = [{"tool": "blast_radius", "args": {}, "result": {
+        "service": "payments-db", "count": 47,
+        "affected": [{"service": f"svc-{i}", "hops": 1} for i in range(47)]}}]
+    answer = f"If payments-db goes down, {count} services are affected, directly or indirectly."
+    problems = verify.check_answer(answer, steps, "What breaks if payments-db goes down?", VOCAB)
+    assert any("counts" in p for p in problems) == flagged

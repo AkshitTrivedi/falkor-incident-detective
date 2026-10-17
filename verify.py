@@ -44,6 +44,7 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
  10. Numbers. A percentage or a duration (ms, s) must appear in a tool result
      ("CPU 99%" is flagged when the alert said 98%). 0 and 100 are allowed.
      10b. "Alerts on X" must name services that have an open alert.
+     10c. "N services" must be the length of a list a tool returned.
  11. Unknown services from the question (trap L, "What depends on
      billing-service?"). If the question names a service-like word that is not
      in the graph, the answer must say so ("not in the graph", "doesn't exist").
@@ -414,13 +415,17 @@ def _returned(steps):
          "chains": [(service, {services it depends on}), ...],
          "alerting": services with an open alert,
          "deploys": {version: service}, "teams": teams who_to_page returned,
-         "numbers": every number in the results, as floats}, all lower-case.
+         "numbers": every number in the results, as floats,
+         "counts": the length of every list in the results}, all lower-case.
     """
     facts = {"text": "", "deployers": set(), "versions": set(), "on_call": set(),
-             "chains": [], "alerting": set(), "deploys": {}, "teams": set(), "numbers": set()}
+             "chains": [], "alerting": set(), "deploys": {}, "teams": set(), "numbers": set(),
+             "counts": set()}
     for step in steps:
         result = {k: v for k, v in step["result"].items() if k not in tools.TRACE_KEYS}
         facts["text"] += json.dumps(result).lower() + "\n"
+        # Rule 10c: how many rows each list held ("47 services").
+        facts["counts"] |= {len(v) for v in result.values() if isinstance(v, list)}
         for d in result.get("deploys", []):
             facts["deployers"].add(str(d.get("by", "")).lower())
             facts["versions"].add(str(d.get("version", "")).lower())
@@ -538,6 +543,14 @@ def check_answer(answer, steps, question, vocab):
             continue
         for name in sorted(_mentions(m[1], vocab["services"]) - alerting):
             problems.append(f"the answer says {name} has an alert, but it has no open alert")
+
+    # Rule 10c: "47 services" must be the length of a list a tool returned.
+    # Live test on the 300-service graph (StepFun): "49 services are affected"
+    # for a 47-row blast radius.
+    for m in re.finditer(r"(?<![\w.])(\d+)\s+(?:services|callers|dependents|dependencies)\b", a):
+        n = int(m[1])
+        if n > 1 and n not in facts["counts"] and m[1] not in q:
+            problems.append(f"the answer counts {n} services, but no tool returned a list of {n}")
 
     # Rule 5: "Unrelated" must not list an alerting dependency of a service the question names.
     # The named service itself is left out, as answers say "X is not a dependency of it".
