@@ -71,7 +71,8 @@ def test_unknown_service_names_are_caught(name):
 def test_ordinary_hyphenated_words_are_not_services():
     """Real Story B wordings (Qwen, Ministral 14B) must not be read as service names."""
     answer = "paymentservice carries the most cross-service and service-to-service calls."
-    assert verify.check_answer(answer, [], "Which services are chokepoints?", VOCAB) == []
+    problems = verify.check_answer(answer, [], "Which services are chokepoints?", VOCAB)
+    assert not [p for p in problems if "not a service" in p]
 
 
 def test_unknown_service_from_question_is_allowed():

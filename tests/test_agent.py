@@ -209,7 +209,8 @@ def test_no_final_answer_falls_back_to_rules(g, fake_llms):
 def test_rate_limited_model_falls_back_to_next(g, fake_llms):
     """A 429 from the first model restarts the question on the next one."""
     fake_llms({"groq": FakeLLM(_rate_limited()),
-               "gemini": FakeLLM(_reply(content="Root cause: fraud-check"))})
+               "gemini": FakeLLM(_reply(tool_calls=[_tool_call("recent_changes", "{}")]),
+                                 _reply(content="Root cause: fraud-check"))})
     out = agent.investigate("What broke?", g=g)
     assert (out["provider"], out["model"]) == ("gemini", "gemini-model")
     assert out["answer"] == "Root cause: fraud-check"
@@ -244,7 +245,8 @@ def test_slow_model_hits_its_budget(g, fake_llms, monkeypatch):
     """A model slower than MODEL_BUDGET_S is abandoned and the next one answers."""
     monkeypatch.setattr(agent, "MODEL_BUDGET_S", 0.2)
     fake_llms({"groq": SlowLLM(2, _reply(content="too late")),
-               "gemini": FakeLLM(_reply(content="Root cause: fraud-check"))})
+               "gemini": FakeLLM(_reply(tool_calls=[_tool_call("recent_changes", "{}")]),
+                                 _reply(content="Root cause: fraud-check"))})
     started = time.time()
     out = agent.investigate("What broke?", g=g)
     assert out["provider"] == "gemini" and time.time() - started < 1.5

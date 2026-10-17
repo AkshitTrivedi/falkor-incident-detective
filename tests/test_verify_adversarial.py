@@ -250,3 +250,54 @@ def test_true_denials_near_real_names_pass(answer):
     """Rule 15 must not fire on a denial of something else next to a real name."""
     assert not [p for p in verify.check_answer(answer, STEPS, "Who is on call for payments?",
                                                VOCAB) if "says it is not" in p]
+
+
+def test_first_name_called_missing_is_flagged():
+    """Rule 15, live Oct 16 (Gemini): "who is priya?" -> "Priya is not in the graph."."""
+    problems = verify.check_answer("Priya is not in the graph.", STEPS, "who is priya?", VOCAB)
+    assert "'priya' is in the graph, but the answer says it is not" in problems
+
+
+def test_answer_with_no_tool_call_is_flagged():
+    """Rule 16, live Oct 16 (StepFun): a made-up path with no tool run."""
+    answer = "api-gateway → feature-store (direct call, 1 hop)."
+    assert any("no tool was called" in p for p in verify.check_answer(
+        answer, [], "Show the dependency path from api-gateway to feature-store", VOCAB))
+    # A bare denial states no graph fact and needs no tool.
+    assert verify.check_answer("There is no service called billing-service in the graph.", [],
+                               "billing-service is down", VOCAB) == []
+
+
+REACH = dict(VOCAB, reach={"checkoutservice": {"paymentservice", "fraud-check", "payments-db",
+                                               "cartservice", "redis-cart"},
+                           "paymentservice": {"fraud-check", "payments-db"},
+                           "fraud-check": {"payments-db"}, "cartservice": {"redis-cart"}})
+
+
+@pytest.mark.parametrize("question,flagged", [
+    ("cartservice and adservice are both failing, what broke?", True),
+    ("checkoutservice and cartservice are both failing, what broke?", False),
+    ("payments-db CPU is at 98%. What is causing it?", False),  # fraud-check calls it
+])
+def test_root_cause_off_the_named_services_chain(question, flagged):
+    """Rule 17, live Oct 16 (Gemini): fraud-check blamed for cartservice and adservice."""
+    answer = ("Root cause: fraud-check v3.1.0, deployed by Daniel Okafor 14 minutes ago.\n"
+              "Page: Payments team, on call Priya Nair.")
+    problems = verify.check_answer(answer, STEPS, question, REACH)
+    assert any("has no dependency path" in p for p in problems) == flagged
+
+
+@pytest.mark.parametrize("question,answer", [
+    # Story C: "checkout" is checkoutservice, which does reach fraud-check.
+    ("There is also an alert on adservice right now. Is it related to the checkout outage?",
+     "Root cause: fraud-check v3.1.0, deployed by Daniel Okafor 14 minutes ago.\n"
+     "Unrelated: adservice.\nPage: Payments team, on call Priya Nair."),
+    # Story K (StepFun): a root-cause line that clears the deploy blames nothing.
+    ("The adservice alert needs a human. Who should I page?",
+     "Root cause: The adservice alert is not caused by the recent fraud-check v3.1.0 deploy "
+     "by Daniel Okafor.\nPage: Storefront team, Maya Chen."),
+])
+def test_root_cause_rule_does_not_fire_on_story_c_or_a_cleared_deploy(question, answer):
+    """Rule 17 false positives from the saved-answer scan, Oct 16."""
+    problems = verify.check_answer(answer, STEPS, question, REACH)
+    assert not any("has no dependency path" in p for p in problems)

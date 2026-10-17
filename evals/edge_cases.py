@@ -310,7 +310,7 @@ def main():
                    "provider": out.get("provider"), "model": out.get("model"),
                    "tools": [s["tool"] for s in out.get("steps", [])], "check": out.get("check"),
                    "summary": out.get("summary"), "answer": out.get("answer"),
-                   "seconds": round(time.time() - t, 1)}
+                   "steps": out.get("steps", []), "seconds": round(time.time() - t, 1)}
             f.write(json.dumps(row) + "\n")
             f.flush()
             print(f"{'PASS' if not reasons else 'FAIL'} {c['id']:4} {row['model']} {row['seconds']}s "

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import agent
 import app
 import diagnose
+import tools
 import verify
 from db import get_graph
 from seed import seed
@@ -176,3 +177,19 @@ def test_off_topic_questions_skip_the_models(g, monkeypatch):
               "billing-service is down, who do I page?", "Who is on call for the SRE team?"):
         out = agent.investigate(q, g=g)
         assert out["provider"] == "rules" and out["steps"] == [] and out["llm_calls"] == 0
+
+
+def test_summary_reads_unrelated_from_prose(g):
+    """C1, live Oct 16 (StepFun): "the adservice alert is unrelated" with no
+    Unrelated line, after dependencies(adservice) ran. The card must list
+    adservice as unrelated, not as related."""
+    vocab = verify.graph_vocabulary(g)
+    steps = [{"tool": "dependencies", "args": {"service": s}, "result": tools.dependencies(g, s)}
+             for s in ("checkoutservice", "adservice")]
+    out = {"answer": "**No — the adservice alert is unrelated to the checkout outage.**\n"
+                     "The actual chain is fraud-check v3.1.0 → payments-db → paymentservice.",
+           "steps": steps, "path": None}
+    s = app.summarize(out, vocab, "There is also an alert on adservice. Is it related to the checkout outage?")
+    assert s["unrelated"] == ["adservice"]
+    assert "adservice" not in s["related"]
+    assert "paymentservice" in s["related"]

@@ -235,6 +235,10 @@ def summarize(out, vocab, question=""):
     steps = out["steps"]
     path = out.get("path")
     related = set(path or [])
+    # Services a tool returned as a dependency, a caller or a path node. The
+    # service a tool was asked about is in `related` but not here: asking
+    # dependencies(adservice) does not put adservice on the failure chain.
+    chain = set(related)
     deploys, page, pages = [], None, []
     for s in steps:
         r = s["result"]
@@ -243,9 +247,11 @@ def summarize(out, vocab, question=""):
         if s["tool"] == "dependencies":
             related.add(r["service"])
             related.update(d["service"] for d in r["depends_on"])
+            chain.update(d["service"] for d in r["depends_on"])
         elif s["tool"] == "blast_radius":  # callers are effects, not unrelated
             related.add(r["service"])
             related.update(d["service"] for d in r["affected"])
+            chain.update(d["service"] for d in r["affected"])
         elif s["tool"] == "recent_changes":
             deploys = r["deploys"]
         elif s["tool"] == "who_to_page":
@@ -263,8 +269,21 @@ def summarize(out, vocab, question=""):
     root = next((d for d in deploys
                  if d["version"].lower() in cause_text and d["service"].lower() in cause_text), None)
 
-    unrelated_text = verify._section(out["answer"].lower(), "unrelated")
-    unrelated = sorted(verify._mentions(unrelated_text, vocab["services"]) - related)
+    answer = out["answer"].lower()
+    unrelated_text = verify._section(answer, "unrelated")
+    named = verify._mentions(unrelated_text, vocab["services"])
+    if not named:
+        # No "Unrelated:" line, so read prose: "the adservice alert is
+        # unrelated to the checkout outage" names adservice before the word.
+        for sent in re.split(r"(?<=[.!?])\s+|\n", answer):
+            m = re.search(r"\b(?:unrelated|not related|separate incident)\b", sent)
+            if m:
+                named |= verify._mentions(sent[:m.start()], vocab["services"])
+    # The answer's verdict wins for a service a tool was only asked about,
+    # but not for one the tools put on the chain or the blamed deploy's.
+    keep = chain | ({root["service"]} if root else set())
+    unrelated = sorted(named - keep)
+    related -= set(unrelated)
     # Names in the question the graph lacks, so the card can say so up front
     # instead of leading with an answer about something else.
     q = question.lower()

@@ -107,6 +107,11 @@ NOT_FOUND = ("not found", "unknown", "doesn't exist", "does not exist", "no serv
              "there is no", "there's no", "isn't a service", "is not a service",
              "not a service", "no service named", "no service called", "not listed",
              "doesn't appear", "does not appear", "not present")
+# Rule 17: a Root cause section that blames nothing ("not found in the graph").
+_NO_CAUSE = r"\W*(?:not found|none|unknown|no root cause|undetermined)"
+# Rule 17: a root-cause sentence that clears a deploy instead of blaming it.
+_CLEARS = (r"\b(?:not caused by|not the cause|isn't caused|is not caused|cannot|can't|"
+           r"unrelated|separate incident|not related|no dependency path)\b")
 # Rule 12: ways of saying a deploy did not happen, on top of NOT_FOUND.
 NO_DEPLOY = NOT_FOUND + ("no deploy", "not deployed", "wasn't deployed", "was not deployed",
                          "no record", "not a recent", "isn't a recent", "is not a recent",
@@ -154,14 +159,20 @@ def graph_vocabulary(g):
         g: FalkorDB Graph handle.
 
     Returns:
-        {"services": set, "people": set, "versions": set, "teams": set}, all lower-case.
+        {"services": set, "people": set, "versions": set, "teams": set,
+         "reach": {service: {every service it depends on, at any depth}}},
+        all lower-case. "reach" is for rule 17.
     """
     def column(cypher):
         return {row[0].lower() for row in g.ro_query(cypher).result_set if row[0]}
+    reach = {row[0].lower(): {n.lower() for n in row[1]} for row in g.ro_query(
+        f"MATCH (a:Service)-[:DEPENDS_ON*1..{tools.MAX_HOPS}]->(b:Service) "
+        "RETURN a.name, collect(DISTINCT b.name)").result_set}
     return {"services": column("MATCH (s:Service) RETURN s.name"),
             "people": column("MATCH (p:Person) RETURN p.name"),
             "versions": column("MATCH (d:Deploy) RETURN DISTINCT d.version"),
-            "teams": column("MATCH (t:Team) RETURN t.name")}
+            "teams": column("MATCH (t:Team) RETURN t.name"),
+            "reach": reach}
 
 
 def _section(text, name, flags=0):
@@ -337,6 +348,29 @@ def _mentions(text, names):
     """
     return {n for n in names
             if re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text)}
+
+
+def _asked_services(question, services):
+    """Return the services a question names, short forms included.
+
+    People say "the checkout outage" for checkoutservice and "payment errors"
+    for paymentservice, so a service whose name ends in "service" also
+    matches its stem ("checkout", "payment", "payments") when the stem has at
+    least four letters ("ad" for adservice is too short to trust).
+
+    Args:
+        question: The user's question, lower-case.
+        services: Service names from graph_vocabulary().
+
+    Returns:
+        set of service names.
+    """
+    found = _mentions(question, services)
+    for name in services:
+        stem = name[:-len("service")] if name.endswith("service") else ""
+        if len(stem) >= 4 and re.search(rf"(?<![\w-]){re.escape(stem)}s?(?![\w-])", question):
+            found.add(name)
+    return found
 
 
 def _returned(steps):
@@ -526,11 +560,44 @@ def check_answer(answer, steps, question, vocab):
     # Rule 15: a real service, person or team must not be called missing.
     # Live test, Oct 16: "There is no Priya Nair in the graph." and "Mei Lin is
     # not in the graph" (both are people in the graph) passed rules 1-14.
+    # A first name the question used counts too, if only one person has it
+    # (live test, Oct 16: "who is priya?" -> "Priya is not in the graph.").
+    firsts = [n.split()[0] for n in vocab["people"]]
     real = ([("service", n) for n in vocab["services"]] + [("person", n) for n in vocab["people"]]
+            + [("person", f) for f in firsts if firsts.count(f) == 1
+               and re.search(rf"\b{re.escape(f)}\b", q)]
             + [("team", t.lower()) for t in vocab.get("teams", ())])
     for kind, name in sorted(real):
         if _denied(plain, name, kind):
             problems.append(f"'{name}' is in the graph, but the answer says it is not")
+
+    # Rule 16: an answer with no tool call behind it is not from the graph.
+    # Live test, Oct 16: StepFun answered "Show the dependency path from
+    # api-gateway to feature-store" with a made-up direct call, no tools run.
+    # A pure denial ("There is no service called billing-service") states no
+    # graph fact, so it needs no tool.
+    states = (_mentions(a, vocab["services"] | vocab["people"] | vocab["versions"])
+              or re.search(r"→|->", a))
+    if not steps and states:
+        problems.append("no tool was called, so nothing in the answer comes from the graph")
+
+    # Rule 17: a root-cause deploy must be on the dependency chain (either
+    # direction) of a failing service the question names. Live test, Oct 16:
+    # "cartservice and adservice are both failing" -> "Root cause: fraud-check",
+    # which neither of them reaches.
+    reach = vocab.get("reach")
+    asked = _asked_services(q, vocab["services"])
+    # A sentence that clears a deploy ("is not caused by the fraud-check
+    # v3.1.0 deploy") does not blame it.
+    blamed = {facts["deploys"][v]
+              for sent in re.split(r"(?<=[.!?])\s+|\n", cause)
+              if not re.search(_CLEARS, sent)
+              for v in _mentions(sent, set(facts["deploys"]))}
+    if reach is not None and asked and not re.match(_NO_CAUSE, cause):
+        for svc in sorted(blamed - asked):
+            if not any(svc in reach.get(a, set()) or a in reach.get(svc, set()) for a in asked):
+                problems.append(f"root cause {svc} has no dependency path to or from "
+                                f"{', '.join(sorted(asked))}")
     return problems
 
 

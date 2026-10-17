@@ -603,6 +603,14 @@ def _check(question, answer, steps, messages, g, client, model, tokens, deadline
     if not problems:
         return _missing_notes(question, answer, vocab) + answer, check, [], None
 
+    if not steps:
+        # Rule 16: no tool ran, so a rewrite "using only the tool results"
+        # has nothing to use. The rules look the facts up instead.
+        log.warning("  check failed: %s; using the rules", "; ".join(problems))
+        check["by_rules"] = True
+        answer, rule_steps, rule_path = _rules(g, question, steps)
+        return answer, check, rule_steps, rule_path
+
     log.warning("  check failed: %s; asking the model to fix it", "; ".join(problems))
     check["retried"] = True
     messages += [{"role": "assistant", "content": answer},
