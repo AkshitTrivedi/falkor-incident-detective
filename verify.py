@@ -16,7 +16,9 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
      people are named, at least one must be the deployer of a returned deploy.
   4. Page: if people are named, at least one must be a returned on-call person.
      4b. A Page section must name an on-call person or a team.
-     4c. "Who should I page?" must be answered with an on-call person.
+     4c. "Who should I page?", or a status question naming no service ("is
+     everything ok?") when the tools showed open alerts, must be answered
+     with an on-call person.
   5. Unrelated: must not list an alerting service that the tools showed the
      failing service depends on (its dependencies() list or the dependency
      path), or that calls it (blast_radius()). Only services with an open alert count, so naming the root cause
@@ -129,6 +131,10 @@ _NO_CAUSE = (r"\W*(?:not found|none|unknown|no root cause|undetermined|"
 # Rule 19: words that report a failure (kept in step with diagnose._INCIDENT).
 _INCIDENT = (r"\b(?:broke|broken|error|errors|5xx|fail|failing|failed|failure|down|outage|"
              r"slow|latency|timeout|timeouts|crash\w*|degraded|not working|unavailable)\b")
+# Rule 4c: status questions that mean "something is wrong, help".
+# "What happened in the last hour?" is not one: a list of changes answers it.
+_STATUS = (r"\b(?:got paged|is (?:everything|anything|something|prod) (?:ok|okay|fine|wrong|broken|down)|"
+           r"what'?s (?:up|wrong|going on))\b")
 # Rule 17: a root-cause sentence that clears a deploy instead of blaming it.
 _CLEARS = (r"\b(?:not caused by|not the cause|isn't caused|is not caused|cannot|can't|"
            r"unrelated|separate incident|not related|no dependency path)\b")
@@ -453,7 +459,9 @@ def check_answer(answer, steps, question, vocab):
     Returns:
         [str, ...] one plain-English problem per unsupported claim; [] if none.
     """
-    original = answer.replace("’", "'").replace("‑", "-")
+    # gpt-oss writes "Priya\u202fNair" (narrow no-break space); match it as a space.
+    original = (answer.replace("’", "'").replace("‑", "-")
+                .replace("\u202f", " ").replace("\u00a0", " "))
     a = original.lower()
     q = question.lower()
     facts = _returned(steps)
@@ -489,15 +497,25 @@ def check_answer(answer, steps, question, vocab):
     # Rule 4b: a Page section must name who to page. Live C2, Oct 16 (StepFun):
     # "Page: the fraud-check owner — use who_to_page on fraud-check" named nobody.
     page = _section(a, "page")
-    if (page.strip() and not page_people and not _mentions(page, vocab.get("teams", set()))
+    # A team counts only when named as one: "the Payments team", "Payments
+    # on-call". Live C1: "the checkout outage" is not the Checkout team.
+    teams = "|".join(re.escape(t) for t in vocab.get("teams", ()))
+    named_team = teams and re.search(rf"(?<![\w-])(?:{teams})[*`]*\s+(?:team|on[- ]?call)", page)
+    if (page.strip() and not page_people and not named_team
             and not re.match(r"\W*(?:none|no one|nobody|n/a|not needed|not applicable|no page)", page)):
         problems.append("the page section names no on-call person or team; "
                         "call who_to_page and name them")
 
     # Rule 4c: "who should I page?" must be answered with a person. Saved
     # Nemotron Nano answer (round 4, story A) was cut off before its Page line.
-    if (re.search(r"\bwho (?:should|do|can|must|to) (?:i |we )?(?:page|wake|call|contact)|"
-                  r"\bkisko page\b", q)
+    # A status question that names no service ("is everything ok?") needs
+    # someone to page too, once the tools showed open alerts. Live V2, Oct 16 (Nemotron): "I just got paged, is
+    # everything ok?" listed the alerts and named nobody.
+    asks_page = re.search(r"\bwho (?:should|do|can|must|to) (?:i |we )?(?:page|wake|call|contact)|"
+                          r"\bkisko page\b", q)
+    reports = (facts["alerting"] and re.search(_STATUS, q)
+               and not _asked_services(q, vocab["services"]))
+    if ((asks_page or reports)
             and not unknown_names(q, vocab)
             # "on-call: Priya" names her too.
             and not _mentions(a, facts["on_call"] | {n.split()[0] for n in facts["on_call"]})

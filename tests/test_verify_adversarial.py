@@ -417,8 +417,12 @@ ALERTING = dict(REACH, alerting={"checkoutservice", "paymentservice", "payments-
     ("the fraud-check owner — use who_to_page on fraud-check for the team and on-call person.", True),
     ("fraud-check's owning team and on-call person — let me know if you'd like me to look that up.",
      True),
+    # Live C1, Oct 16 (StepFun): "checkout" here is the outage, not the Checkout team.
+    ("the fraud-check team and on-call, since fraud-check is the root cause of the checkout "
+     "outage.", True),
     ("Payments team, on-call Priya Nair.", False),
     ("Payments team.", False),
+    ("the Payments on-call.", False),
     ("not applicable.", False),
 ])
 def test_page_section_must_name_someone(page, flagged):
@@ -456,3 +460,21 @@ def test_alerts_on_must_name_alerting_services(text, flagged):
               "\nPage: Payments team, on-call Priya Nair.")
     problems = verify.check_answer(answer, STEPS, QUESTION, ALERTING)
     assert any("has an alert" in p for p in problems) == flagged
+
+
+@pytest.mark.parametrize("answer,flagged", [
+    # Live V2, Oct 16 (Nemotron): listed the alerts, paged nobody.
+    ("Not everything is ok. Active alerts: checkoutservice HTTP 5xx rate 23%, "
+     "payments-db CPU 98%. Consider the recent fraud-check deploy.", True),
+    (GOOD, False),
+])
+def test_status_question_needs_someone_to_page(answer, flagged):
+    """Rule 4c: "is everything ok?" with open alerts is answered with a page."""
+    problems = verify.check_answer(answer, STEPS, "I just got paged, is everything ok?", VOCAB)
+    assert any("asks who to page" in p for p in problems) == flagged
+
+
+def test_names_with_no_break_spaces_still_match():
+    """gpt-oss writes "Priya Nair"; it is the same person."""
+    answer = swap("Page: Payments team, on-call Priya Nair.", "Page: **Payments** team – Priya Nair")
+    assert verify.check_answer(answer, STEPS, QUESTION, VOCAB) == []

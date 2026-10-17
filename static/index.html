@@ -964,7 +964,7 @@ function showAnswer() {
     lit.push(d); roots.push(d); pathEdges.push(`${d}->${svc(s.root_cause.service)}`);
   }
   const keep = spotlight(lit, { muted: s.unrelated.map(svc), pathEdges, roots, context, chain: (s.path || []).map(svc) });
-  const pages = s.no_cause && s.pages?.length ? s.pages : (s.page ? [s.page] : []);
+  const pages = s.pages?.length ? s.pages : (s.page ? [s.page] : []);
   pages.forEach(p => {
     const ids = addPageNodes(p.service, p.team, p.on_call);
     ids.forEach(id => keep.merge(cy.getElementById(id)));
@@ -1113,12 +1113,12 @@ function firstLine(out) {
 }
 
 /**
- * The page rows for the verdict card: summary.pages merged by team and on-call
- * when no root cause was found ("cartservice, emailservice" under one Omar
- * Haddad row), else just summary.page.
+ * The page rows for the verdict card: summary.pages (who the answer pages, in
+ * its order) merged by team and on-call ("cartservice, emailservice" under one
+ * Omar Haddad row).
  */
 function cardPages(s) {
-  if (!(s.no_cause && s.pages?.length)) return s.page ? [s.page] : [];
+  if (!s.pages?.length) return s.page ? [s.page] : [];
   const rows = [];
   for (const p of s.pages) {
     const same = rows.find(r => r.team === p.team && r.on_call === p.on_call);

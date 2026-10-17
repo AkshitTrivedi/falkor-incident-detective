@@ -222,8 +222,8 @@ def summarize(out, vocab, question=""):
          "related": [service, ...],          services the failing service depends on, plus the path
          "root_cause": {"service", "version", "by"} or None,
          "unrelated": [service, ...],        named under "Unrelated" in the answer
-         "page": {"service", "team", "on_call"} or None,  service = the one who_to_page was asked about
-         "pages": [page, ...],               every who_to_page result, in order (several
+         "page": {"service", "team", "on_call"} or None,  the first of pages
+         "pages": [page, ...],               who_to_page results the answer names, in its order (several
                                              failing services, one owner each)
          "no_cause": bool,                   the answer says no root cause was found, so the
                                              card says that instead of a blast radius
@@ -303,6 +303,24 @@ def summarize(out, vocab, question=""):
     q = question.lower()
     missing = [diagnose._as_written(question, name)
                for _, name in verify.unknown_names(question, vocab)]
+    # Page rows: only the owners the answer tells you to page, in the order it
+    # names them. Every who_to_page call is not a page: live A6 looked up
+    # checkoutservice's owner on a failed attempt, then paged Payments; F6
+    # looked up cartservice's owner and paged nobody.
+    # When the answer says "page" anywhere, only sentences that say it count:
+    # live F5 named Omar Haddad only to say the fault was not in his service.
+    sentences = re.split(r"(?<=[.!?])\s+|\n", answer)
+    paging = [x for x in sentences if re.search(r"\bpage\b", x)] or sentences
+
+    def named_at(p):
+        """Where the answer first pages p's on-call person or team, or None."""
+        names = [p["on_call"], p["on_call"].split()[0]] if p["on_call"] else []
+        pats = [rf"(?<![\w-]){re.escape(n.lower())}(?![\w-])" for n in names]
+        pats.append(rf"(?<![\w-]){re.escape(p['team'].lower())}\s+(?:team|on[- ]?call)")
+        hits = [answer.find(x) for x in paging if any(re.search(pat, x) for pat in pats)]
+        return min(hits) if hits else None
+    pages = sorted((p for p in pages if named_at(p) is not None), key=named_at)
+    page = pages[0] if pages else None
     return {"path": path, "related": sorted(related),
             "root_cause": root and {k: root[k] for k in ("service", "version", "by")},
             "unrelated": unrelated, "page": page, "pages": pages,

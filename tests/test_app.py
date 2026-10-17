@@ -229,3 +229,25 @@ def test_no_cause_card_does_not_call_the_asked_service_unrelated(g):
            "steps": steps, "path": None}
     s = app.summarize(out, verify.graph_vocabulary(g), "adservice cache miss rate is high. What broke?")
     assert s["no_cause"] and "adservice" not in s["unrelated"]
+
+
+def test_card_pages_only_who_the_answer_pages(g):
+    """Live A6 and F5, Oct 16: a who_to_page call on checkoutservice put Omar
+    Haddad on the card, though the answer paged only Priya Nair."""
+    steps = [{"tool": "recent_changes", "args": {}, "result": tools.recent_changes(g)},
+             {"tool": "who_to_page", "args": {}, "result": tools.who_to_page(g, "checkoutservice")},
+             {"tool": "who_to_page", "args": {}, "result": tools.who_to_page(g, "fraud-check")}]
+    out = {"answer": "Root cause: fraud-check v3.1.0, deployed by Daniel Okafor.\n"
+                     "Page: Payments team, Priya Nair. Omar Haddad is the Checkout on-call "
+                     "for checkoutservice itself, but the fault is downstream of it.",
+           "steps": steps, "path": None}
+    s = app.summarize(out, verify.graph_vocabulary(g), "Should I page the SRE team for the checkout errors?")
+    assert [p["on_call"] for p in s["pages"]] == ["Priya Nair"] and s["page"]["on_call"] == "Priya Nair"
+
+
+def test_card_pages_both_owners_in_the_order_the_answer_gives(g):
+    """A10: the deploy explains checkoutservice; cartservice's owner is paged too."""
+    r = diagnose.rule_answer(g, "checkoutservice and cartservice are both failing, what broke?")
+    s = app.summarize({"answer": r["answer"], "steps": r["steps"], "path": r["path"]},
+                      verify.graph_vocabulary(g), "checkoutservice and cartservice are both failing")
+    assert [p["on_call"] for p in s["pages"]] == ["Priya Nair", "Omar Haddad"]
