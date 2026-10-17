@@ -123,8 +123,9 @@ def test_run_tool_errors_are_returned_not_raised(g, name, raw, expected):
 
 
 def test_cypher_is_hidden_from_llm():
-    """The LLM gets the data only; the Cypher is kept for the UI."""
-    assert "cypher" not in agent._for_llm({"path": ["a", "b"], "cypher": "MATCH ..."})
+    """The LLM gets the data only; the Cypher and its params are kept for the UI."""
+    sent = agent._for_llm({"path": ["a", "b"], "cypher": "MATCH ...", "params": {"a": "x"}})
+    assert "cypher" not in sent and "params" not in sent
 
 
 def test_unknown_provider():

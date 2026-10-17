@@ -26,6 +26,8 @@ one fails too, it shows plain_answer() instead: the tool rows, with no model tex
 import json
 import re
 
+import tools
+
 # Section labels in the answer format the system prompt asks for, e.g.
 # "Root cause:", "**Page:**", "- Evidence (graph):". Same pattern as bakeoff.py.
 _LABEL = r"(?:^|\n)[*_#\s-]*(?:{})[^:\n]{{0,20}}:"
@@ -93,7 +95,7 @@ def _returned(steps):
     facts = {"text": "", "deployers": set(), "versions": set(), "on_call": set(),
              "chains": [], "alerting": set()}
     for step in steps:
-        result = {k: v for k, v in step["result"].items() if k != "cypher"}
+        result = {k: v for k, v in step["result"].items() if k not in tools.TRACE_KEYS}
         facts["text"] += json.dumps(result).lower() + "\n"
         for d in result.get("deploys", []):
             facts["deployers"].add(str(d.get("by", "")).lower())

@@ -8,12 +8,14 @@ Safety model:
   * Every query has a timeout, so one slow call cannot hang the agent.
 
 Every tool returns a plain dict (JSON-ready for the LLM and the API). The dict
-includes the Cypher that ran, so the UI can show users exactly how each answer
-was found. Unknown service names return an error plus the list of valid names,
+includes the Cypher that ran and its parameter values ("cypher", "params"), so
+the UI can show users exactly how each answer was found; runnable() joins the
+two into a query that can be pasted into FalkorDB Browser. Unknown service names return an error plus the list of valid names,
 so the LLM can correct itself and retry.
 
 All tools take `g`, a FalkorDB Graph handle from db.get_graph().
 """
+import json
 import time
 
 # Per-query timeout in milliseconds. Our graph answers in a few ms; this only
@@ -28,6 +30,35 @@ TIMEOUT_MS = 3000
 #               -> fraud-check -> risk-model -> feature-store
 # so 8 leaves headroom. tests/test_seed.py fails if the seed ever outgrows this cap.
 MAX_HOPS = 8
+
+# Result keys that trace how a result was found. They are for people (the UI),
+# so they are left out of what the LLM and the answer checker read.
+TRACE_KEYS = {"cypher", "params"}
+
+
+def runnable(cypher, params=None):
+    """Return `cypher` with its parameter values written in as a CYPHER prefix.
+
+    FalkorDB reads `CYPHER name="x" MATCH ... $name ...` as a parameterised
+    query, so the result runs as pasted into FalkorDB Browser or redis-cli
+    GRAPH.QUERY, with the same values the tool used.
+
+    Args:
+        cypher: Query text with $params.
+        params: Dict of parameter values (str, int, float, bool), or None.
+
+    Returns:
+        The query text, prefixed with "CYPHER k=v ... " when there are params.
+
+    Example:
+        runnable("MATCH (s:Service {name: $name}) RETURN s", {"name": "frontend"})
+        -> 'CYPHER name="frontend" MATCH (s:Service {name: $name}) RETURN s'
+    """
+    if not params:
+        return cypher
+    # json.dumps gives a double-quoted, escaped string literal, which Cypher accepts.
+    values = " ".join(f"{k}={json.dumps(v)}" for k, v in params.items())
+    return f"CYPHER {values} {cypher}"
 
 
 def _run(g, cypher, params=None):
@@ -103,9 +134,10 @@ def dependencies(g, service):
     # walked (see the "unused edge alias" limitation in the FalkorDB docs).
     cypher = (f"MATCH p = (s:Service {{name: $name}})-[r:DEPENDS_ON*1..{MAX_HOPS}]->(x:Service) "
               "RETURN x.name, min(length(p)) AS hops ORDER BY hops, x.name")
-    rows = _run(g, cypher, {"name": service})
+    params = {"name": service}
+    rows = _run(g, cypher, params)
     return {"service": service, "depends_on": [{"service": n, "hops": h} for n, h in rows],
-            "cypher": cypher}
+            "cypher": cypher, "params": params}
 
 
 def blast_radius(g, service):
@@ -132,9 +164,10 @@ def blast_radius(g, service):
         return err
     cypher = (f"MATCH p = (s:Service {{name: $name}})<-[r:DEPENDS_ON*1..{MAX_HOPS}]-(x:Service) "
               "RETURN x.name, min(length(p)) AS hops ORDER BY hops, x.name")
-    rows = _run(g, cypher, {"name": service})
+    params = {"name": service}
+    rows = _run(g, cypher, params)
     return {"service": service, "affected": [{"service": n, "hops": h} for n, h in rows],
-            "cypher": cypher}
+            "cypher": cypher, "params": params}
 
 
 def recent_changes(g, minutes=60, now_ms=None):
@@ -174,6 +207,7 @@ def recent_changes(g, minutes=60, now_ms=None):
                     "minutes_ago": _minutes_ago(now_ms, ts)}
                    for s, sev, m, ts in _run(g, alert_q, params)],
         "cypher": [deploy_q, alert_q],
+        "params": params,   # the same values for both queries
     }
 
 
@@ -209,11 +243,14 @@ def dependency_path(g, from_service, to_service):
               "RETURN [n IN nodes(path) | n.name], pathWeight")
     # Try the given order first, then the reverse.
     for a, b in ((from_service, to_service), (to_service, from_service)):
-        rows = _run(g, cypher, {"a": a, "b": b})
+        params = {"a": a, "b": b}
+        rows = _run(g, cypher, params)
         if rows:
-            return {"path": rows[0][0], "latency_ms": rows[0][1], "cypher": cypher}
+            return {"path": rows[0][0], "latency_ms": rows[0][1], "cypher": cypher,
+                    "params": params}
     return {"path": None, "note": f"no dependency path between {from_service} and "
-                                  f"{to_service} in either direction", "cypher": cypher}
+                                  f"{to_service} in either direction", "cypher": cypher,
+            "params": {"a": from_service, "b": to_service}}
 
 
 def critical_services(g, metric="betweenness", limit=5):
@@ -250,9 +287,10 @@ def critical_services(g, metric="betweenness", limit=5):
     else:
         return {"error": "metric must be 'betweenness' or 'pagerank'"}
     # Clamp the LLM-supplied limit to the number of services in the seed.
-    rows = _run(g, cypher, {"limit": min(int(limit), 22)})
+    params = {"limit": min(int(limit), 22)}
+    rows = _run(g, cypher, params)
     return {"metric": metric, "ranking": [{"service": n, "score": round(s, 4)} for n, s in rows],
-            "cypher": cypher}
+            "cypher": cypher, "params": params}
 
 
 def who_to_page(g, service):
@@ -277,8 +315,10 @@ def who_to_page(g, service):
     cypher = ("MATCH (s:Service {name: $name})<-[:OWNS]-(t:Team) "
               "OPTIONAL MATCH (p:Person {on_call: true})-[:MEMBER_OF]->(t) "
               "RETURN t.name, p.name")
-    team, person = _run(g, cypher, {"name": service})[0]
-    return {"service": service, "team": team, "on_call": person, "cypher": cypher}
+    params = {"name": service}
+    team, person = _run(g, cypher, params)[0]
+    return {"service": service, "team": team, "on_call": person, "cypher": cypher,
+            "params": params}
 
 
 # Name -> function lookup used by the agent to dispatch the LLM's tool calls.

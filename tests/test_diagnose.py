@@ -66,3 +66,36 @@ def test_undecided_shows_the_models_rows(g):
 def test_unknown_service_is_not_matched(g):
     """billing-service is not in the graph, so it is not taken as the failing service."""
     assert diagnose.failing_services(g, "What depends on billing-service?") == []
+
+
+def test_unknown_service_is_named_in_the_reason(g):
+    """Trap L: the rules say billing-service is not in the graph, not "no service named"."""
+    assert diagnose.unknown_services(g, "billing-service is down, who do I page?") == ["billing-service"]
+    out = diagnose.rule_answer(g, "billing-service is down, who do I page?")
+    assert not out["decided"]
+    assert "billing-service is not a service in the graph" in out["answer"]
+
+
+def test_blast_radius_question(g):
+    """"What breaks if X goes down?" runs blast_radius, not dependencies."""
+    out = diagnose.rule_answer(g, "What breaks if payments-db goes down?")
+    assert out["decided"]
+    assert [s["tool"] for s in out["steps"]] == ["blast_radius", "who_to_page"]
+    affected = {a["service"] for a in out["steps"][0]["result"]["affected"]}
+    assert {"paymentservice", "fraud-check", "checkoutservice"} <= affected
+    assert "paymentservice (1 hop)" in out["answer"]
+    assert out["answer"].endswith("Page: Payments team owns payments-db, on call Priya Nair.")
+
+
+def test_critical_services_question(g):
+    """"Which services are most critical?" ranks by betweenness; paymentservice is first."""
+    out = diagnose.rule_answer(g, "Which services are most critical?")
+    assert out["decided"]
+    assert [s["tool"] for s in out["steps"]] == ["critical_services"]
+    assert "1. paymentservice" in out["answer"]
+
+
+def test_what_broke_is_not_mistaken_for_blast_radius(g):
+    """"What broke" questions still get the root-cause rules."""
+    out = diagnose.rule_answer(g, "checkoutservice is down, what broke?")
+    assert out["steps"][0]["tool"] == "recent_changes"

@@ -89,3 +89,20 @@ def test_unknown_service_lists_known(ctx):
     g, _ = ctx
     r = tools.blast_radius(g, "payment-db")
     assert "error" in r and "payments-db" in r["known_services"]
+
+
+def test_runnable_queries_run_without_params(ctx):
+    """Every query the UI shows runs as pasted: its params are in the CYPHER prefix."""
+    g, _ = ctx
+    r = tools.dependencies(g, "checkoutservice")
+    q = tools.runnable(r["cypher"], r["params"])
+    assert q.startswith('CYPHER name="checkoutservice" MATCH')
+    assert len(g.ro_query(q).result_set) == len(r["depends_on"])
+
+
+def test_runnable_escapes_quotes(ctx):
+    """Quotes in a value cannot break out of the string literal."""
+    g, _ = ctx
+    q = tools.runnable("RETURN $s", {"s": 'a"b\'c'})
+    assert g.ro_query(q).result_set == [['a"b\'c']]
+    assert tools.runnable("RETURN 1", None) == "RETURN 1"

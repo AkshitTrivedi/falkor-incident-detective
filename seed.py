@@ -25,6 +25,7 @@ Usage:
   python seed.py                                    # local Docker
   FALKORDB_URL=$FALKORDB_CLOUD_URL python seed.py   # FalkorDB Cloud
 """
+import logging
 import random
 import time
 
@@ -277,6 +278,8 @@ def ensure_fresh(g, max_age_min=MAX_STORY_AGE_MIN):
     now_ms = int(time.time() * 1000)
     if newest is not None and now_ms - (newest + STORY_DEPLOY_AGO) <= max_age_min * MIN:
         return False
+    logging.getLogger("detective.seed").info(
+        "re-seeding the demo graph (%s)", "empty" if newest is None else "story too old")
     seed(g, now_ms)
     return True
 

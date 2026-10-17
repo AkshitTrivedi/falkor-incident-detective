@@ -28,6 +28,7 @@ Usage:
   LLM_PROVIDER=gemini python agent.py "which services are chokepoints?"
 """
 import json
+import logging
 import os
 import sys
 import threading
@@ -42,6 +43,11 @@ import seed
 import tools
 import verify
 from db import get_graph
+
+# Progress and errors for the terminal: each model tried, each LLM call and
+# tool call, check failures, fallbacks. app.py sets the level from LOG_LEVEL
+# (INFO by default; WARNING keeps only problems, e.g. when deployed).
+log = logging.getLogger("detective.agent")
 
 load_dotenv()
 
@@ -244,15 +250,16 @@ def run_tool(g, name, raw_args):
     except TypeError as e:  # missing or unexpected argument names
         return args, {"error": f"bad arguments for {name}: {e}"}
     except Exception as e:  # e.g. a query timeout; report it instead of crashing
+        log.exception("tool %s(%s) raised", name, args)   # full traceback in the terminal
         return args, {"error": f"{name} failed: {e}"}
 
 
 def _for_llm(result):
-    """Return the tool result without its Cypher, to save LLM tokens.
+    """Return the tool result without its Cypher and params, to save LLM tokens.
 
     The Cypher is for people (shown in the UI); the LLM only needs the data.
     """
-    return json.dumps({k: v for k, v in result.items() if k != "cypher"})
+    return json.dumps({k: v for k, v in result.items() if k not in tools.TRACE_KEYS})
 
 
 def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS):
@@ -301,25 +308,34 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
     started = time.time()
     deadline = started + QUESTION_DEADLINE_S
     fallbacks = []
+    log.info("question: %r", question)
     for i, (p, m) in enumerate(chain):
         is_last = i == len(chain) - 1
         if time.time() >= deadline:
+            log.warning("skip %s/%s: question deadline (%ss) passed", p, m, QUESTION_DEADLINE_S)
             fallbacks.append({"provider": p, "model": m, "error": "skipped: question deadline"})
             continue
         model_deadline = deadline if is_last else min(deadline, time.time() + MODEL_BUDGET_S)
+        log.info("trying %s/%s", p, m)
         try:
             out = _investigate_once(question, g, p, m, max_steps, fail_fast=not is_last,
                                     deadline=model_deadline)
         except APIError as e:  # includes timeouts and connection errors
+            log.warning("%s/%s failed: %s: %s", p, m, type(e).__name__, str(e)[:300])
             if pinned:
                 raise
             fallbacks.append({"provider": p, "model": m,
                               "error": f"{type(e).__name__}: {str(e)[:200]}"})
             continue
         out.update(fallbacks=fallbacks, seconds=round(time.time() - started, 1))
+        log.info("answered by %s/%s in %ss: %d LLM calls, %d tokens, %d tool calls%s",
+                 out["provider"], out["model"], out["seconds"], out["llm_calls"],
+                 sum(out["tokens"].values()), len(out["steps"]),
+                 ", by rules after failed check" if out["check"]["by_rules"] else "")
         return out
 
     # Every model failed or time ran out: answer from the graph with the rules.
+    log.warning("no model answered; using the rules diagnosis")
     rules = diagnose.rule_answer(g, question)
     return {"answer": rules["answer"], "steps": rules["steps"],
             "queries": _queries(rules["steps"]), "path": rules["path"],
@@ -330,11 +346,16 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
 
 
 def _queries(steps):
-    """Return every Cypher query that ran in `steps`, in order (for the UI trace)."""
+    """Return every Cypher query that ran in `steps`, in order (for the UI trace).
+
+    Each query has its parameter values written in (tools.runnable), so it can
+    be copied from the UI and run as is in FalkorDB Browser.
+    """
     out = []
     for step in steps:
-        cypher = step["result"].get("cypher")
-        out += cypher if isinstance(cypher, list) else [cypher] if cypher else []
+        cypher, params = step["result"].get("cypher"), step["result"].get("params")
+        for c in cypher if isinstance(cypher, list) else [cypher] if cypher else []:
+            out.append(tools.runnable(c, params))
     return out
 
 
@@ -362,8 +383,12 @@ def _investigate_once(question, g, provider, model, max_steps, fail_fast, deadli
     answer, llm_calls = None, 0
 
     for _ in range(max_steps):
+        t0 = time.time()
         reply = _ask(client, model, messages, tokens, deadline)
         llm_calls += 1
+        log.info("  LLM call %d: %.1fs, %s", llm_calls, time.time() - t0,
+                 ", ".join(tc.function.name for tc in reply.tool_calls) if reply.tool_calls
+                 else "final answer")
 
         # No tool calls means the LLM has written its final answer.
         if not reply.tool_calls:
@@ -380,12 +405,17 @@ def _investigate_once(question, g, provider, model, max_steps, fail_fast, deadli
             args, result = run_tool(g, tc.function.name, tc.function.arguments)
             steps.append({"tool": tc.function.name, "args": args, "result": result,
                           "ms": round((time.time() - t0) * 1000)})
+            if "error" in result:
+                log.warning("    tool %s(%s) -> error: %s", tc.function.name, args, result["error"])
+            else:
+                log.info("    tool %s(%s) %d ms", tc.function.name, args, steps[-1]["ms"])
             if tc.function.name == "dependency_path" and result.get("path"):
                 path = result["path"]
             messages.append({"role": "tool", "tool_call_id": tc.id,
                              "content": _for_llm(result)})
 
     if answer is None:  # ran out of steps: treat like an answer that failed the check
+        log.warning("  no final answer after %d steps; using the rules", max_steps)
         check = {"problems": [f"no final answer after {max_steps} steps"],
                  "retried": False, "by_rules": True}
         answer, rule_steps, rule_path = _rules(g, question, steps)
@@ -487,6 +517,7 @@ def _check(question, answer, steps, messages, g, client, model, tokens, deadline
     if not problems:
         return answer, check, [], None
 
+    log.warning("  check failed: %s; asking the model to fix it", "; ".join(problems))
     check["retried"] = True
     messages += [{"role": "assistant", "content": answer},
                  {"role": "user", "content": RETRY_PROMPT.format(
@@ -494,10 +525,15 @@ def _check(question, answer, steps, messages, g, client, model, tokens, deadline
     try:
         reply = _ask(client, model, messages, tokens, deadline)
         fixed = None if reply.tool_calls else reply.content
-    except APIError:
+    except APIError as e:
+        log.warning("  retry failed: %s: %s", type(e).__name__, str(e)[:300])
         fixed = None
-    if fixed and not verify.check_answer(fixed, steps, question, vocab):
+    if fixed and not (still := verify.check_answer(fixed, steps, question, vocab)):
+        log.info("  retry passed the check")
         return fixed, check, [], None
+    if fixed:
+        log.warning("  retry still failed the check: %s", "; ".join(still))
+    log.warning("  using the rules diagnosis")
     check["by_rules"] = True
     answer, rule_steps, rule_path = _rules(g, question, steps)
     return answer, check, rule_steps, rule_path
@@ -506,6 +542,7 @@ def _check(question, answer, steps, messages, g, client, model, tokens, deadline
 if __name__ == "__main__":
     # Command-line use: print skipped models, each tool step, then the answer.
     q = " ".join(sys.argv[1:]) or "checkoutservice is throwing 5xx errors. What broke?"
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "WARNING"), format="%(levelname)s %(message)s")
     out = investigate(q)
     for f in out["fallbacks"]:
         print(f"skipped {f['provider']} / {f['model']}: {f['error']}")
