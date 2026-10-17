@@ -12,7 +12,7 @@ Built solo for Graph Hacks (WeMakeDevs × FalkorDB), Oct 15–18 2026. **Track 0
 
 - **Problem.** At 3 a.m. the question is never "what is the CPU?". It is *which of the 20 services upstream is really at fault, did a deploy cause it, and who owns it?* That is a connected-data question: services call services, deploys land on services, alerts fire on services, teams own services.
 - **How it works.** An LLM investigates through six fixed, read-only graph tools. It never writes Cypher. Every Cypher query that ran is shown next to the answer.
-- **Why trust it.** A 21-rule checker compares every sentence of the answer with what the graph returned. Made-up people, services, versions, numbers, backwards dependencies and false "not in the graph" denials are caught. A bad answer gets one retry. If that fails too, a rules-only diagnosis answers with no model at all.
+- **Why trust it.** A 25-rule checker compares every sentence of the answer with what the graph returned. Made-up people, services, versions, numbers, backwards dependencies and false "not in the graph" denials are caught. A bad answer gets one retry. If that fails too, a rules-only diagnosis answers with no model at all.
 
 ## Try it in five commands
 
@@ -62,7 +62,7 @@ flowchart LR
     R -- yes --> A[LLM agent<br/>fallback chain of 4 models]
     A -- "picks 1 of 6 tools" --> T[Read-only tools<br/>parameterised Cypher]
     T <--> G[(FalkorDB<br/>incidents graph)]
-    A --> C{Checker<br/>21 rules}
+    A --> C{Checker<br/>25 rules}
     C -- pass --> OUT
     C -- fail --> A2[One retry]
     A2 --> C2{Checker}
@@ -163,15 +163,15 @@ Details that took testing against FalkorDB v4.22.0, worth knowing if you build o
 
 ## The checker
 
-A fluent wrong answer is worse than no answer at 3 a.m. After the model writes its answer, [`verify.py`](verify.py) reads it next to the raw tool results and lists every claim the graph does not support. An empty list is a pass. The 21 rules fall into five groups:
+A fluent wrong answer is worse than no answer at 3 a.m. After the model writes its answer, [`verify.py`](verify.py) reads it next to the raw tool results and lists every claim the graph does not support. An empty list is a pass. The 25 rules (numbered 1–21, plus 4b, 4c, 5b and 10b) fall into five groups:
 
 | Group | What it catches | Example it caught |
 |---|---|---|
-| **Invented facts** (1–4, 6–10) | A person, service, team, version or number no tool returned | An on-call "Sarah Jenkins" who is not in the graph |
+| **Invented facts** (1–4, 6–10b) | A person, service, team, version or number no tool returned; an alert on a service that has none | An on-call "Sarah Jenkins" who is not in the graph |
 | **Wrong reasoning** (5, 5b, 17, 18) | An alerting service on the failure chain listed as "unrelated"; a root cause with no path to the failing service; "X depends on Y" backwards | "Yes, payments-db depends on checkoutservice" (it is the other way round) |
 | **Questions about things that do not exist** (11–15) | A made-up service, version, person or team in the question that the answer does not call out; a real name wrongly called missing | "Did the paymentservice v2.0.0 deploy cause the latency?" answered as if v2.0.0 existed |
 | **Skipped work** (16, 19, 20) | Graph facts with no tool call behind them; paging someone without looking at recent deploys; ranking "most critical" by anything but betweenness | An empty reply that said "I'll check…" and ran nothing |
-| **Unanswered question** (21) | "Should we roll back X?" answered with a root cause and no yes or no | A rollback answer whose only "no" was in "(no index)" |
+| **Unanswered question** (4b, 4c, 21) | A Page section that names nobody; "who should I page?" with no person; "Should we roll back X?" with no yes or no | "Page: use who_to_page on fraud-check" |
 
 When a check fails, the model gets one retry with the problems listed. If the retry fails too, the rules diagnosis answers. The checker's own mistakes are tested too: the rules are run over all 456 saved model answers in [`docs/model-eval/`](docs/model-eval/) to look for correct answers it would wrongly reject.
 
@@ -183,18 +183,28 @@ All numbers are from the code in this repository and can be reproduced with the 
 
 | Run | Cases | Passed | What it measures |
 |---|---|---|---|
-| Unit tests | 247 | 247 | Tools, checker, routing, card, no-key path |
+| Unit tests | 268 | 268 | Tools, checker, routing, card, no-key path |
 | Edge-case suite, no models (rules only) | 62 | 62 | Deterministic answers from the rules diagnosis |
 | Edge-case suite, live models | 62 | 62 | Full chain: real LLMs, checker, retry, card |
-| Checker over saved model answers | 456 | 31 flagged | Possible false positives (see note) |
+| Checker over saved model answers | 456 | 42 rejected | All 42 read by hand: every one a real defect, no false positives |
 
-**Live run, 16 Oct 2026, 62 cases answered:** StepFun Step-5 answered 38, the rules diagnosis 17 (write requests, off-topic, unknown names, or every model rate-limited), Nemotron 6, Qwen 1. Groq and Gemini were out of free quota that day, so this run did not exercise them.
+**Final live run, 16 Oct 2026.** Who answered the 62 questions:
 
-**Read by hand:** every live answer was read, not only graded by keyword. No wrong fact was found in the final run; the weak spots below are listed. Earlier runs did contain wrong answers (checkoutservice listed as "unrelated" to a `fraud-check` root cause; a rollback answer with no yes or no). Both are now caught by rules 5b and 21, and their saved cases pass.
+| Answered by | Questions |
+|---|---|
+| StepFun Step-5, first try | 35 |
+| StepFun Step-5, after one retry | 1 |
+| Nemotron 3 Super | 2 |
+| Rules diagnosis, after a model answer failed the checker | 10 |
+| Rules diagnosis, no model needed (write requests, off-topic, unknown names) | 14 |
 
-**The 31 flags** are saved answers the checker rejects. They have not all been reviewed by hand yet, so this number is not yet a measure of false positives. The list is reproducible with `python -m scripts.checker_scan`.
+Groq and Gemini were out of free quota that day, so this run did not exercise them. Ten answers failing the checker and falling back to rules is the checker doing its job: each of those model answers had a defect it caught.
 
-**Known weak spots in the final run** (read by hand, not wrong facts): the C2 answer names no person to page ("use who_to_page"), the A10 rules answer does not page anyone for the cartservice failure, and the C3 card's "Not related" chips list the payments chain. Those are open items.
+**Read by hand.** Every live answer was read, not only graded by keyword, and claims were checked against the graph. No wrong fact was found in the final run. Three cosmetic issues remain: one answer lists productcatalog (betweenness 15) before frontend (17), one card summary repeats a page row (the UI merges it), and one retried answer started with blank lines (fixed since).
+
+**It took ten live runs to get here.** Earlier runs scored between 58 and 62 out of 62, and reading them found wrong answers the keyword grader had passed, even in a 62/62 run: `checkoutservice` called unrelated to a `fraud-check` root cause, a rollback answer with no yes or no, a Page line naming nobody, a status answer that paged nobody, and a card that showed a page row the answer never gave. Each became a checker rule or a card fix with a test. The full list is in [docs/TESTING.md](docs/TESTING.md).
+
+**The 42 rejected saved answers** come from the model-selection runs. 18 of them had been *passed* by the bake-off's keyword grader: for example an invented `authservice`, an invented on-call "Maya Lin", and paging the deployer instead of the on-call person. Breakdown and the review of the answers the checker passes: [docs/TESTING.md](docs/TESTING.md#hand-review-of-the-checker-16-oct-2026).
 
 Raw run outputs: [`docs/model-eval/edge_live_2026-10-16.jsonl`](docs/model-eval/edge_live_2026-10-16.jsonl) and [`docs/model-eval/edge_rules_2026-10-16.jsonl`](docs/model-eval/edge_rules_2026-10-16.jsonl). Each row holds the question, answer, tool steps and Cypher, so every claim can be traced.
 
@@ -208,7 +218,7 @@ The 62 questions cover the three stories (14), red herrings (3), blast radius (5
 ## Limitations
 
 - **The data is synthetic.** One graph, three stories. The suite shows the agent behaves on this graph, not on yours.
-- **The suite grades by keywords.** A keyword can pass a wrong answer. In the last run an answer listed `checkoutservice` as unrelated and still passed the grader; reading every answer by hand found it, and rule 5b now catches it. All answers in the results above were read by hand as well.
+- **The suite grades by keywords.** A keyword can pass a wrong answer. In an earlier run an answer listed `checkoutservice` as unrelated and still passed the grader; reading every answer by hand found it, and rule 5b now catches it. All answers in the results above were read by hand as well.
 - **The checker only knows what the tools return.** It cannot tell that an answer is badly worded or leaves out something useful, only that a claim is unsupported.
 - **Free tiers move.** Groq's free tier allows 200,000 tokens a day; once that is spent the chain continues on the next provider, which is slower. Model rankings were measured on one day from India.
 - **The agent only reads.** It cannot restart a service, roll back, or page anyone. It tells you who to page.
@@ -221,7 +231,7 @@ The 62 questions cover the three stories (14), red herrings (3), blast radius (5
 | [`seed.py`](seed.py) | Builds the demo graph (re-runnable) |
 | [`tools.py`](tools.py) | The six read-only tools and their Cypher |
 | [`agent.py`](agent.py) | LLM loop, provider fallback chain, retry, deadlines |
-| [`verify.py`](verify.py) | The 21-rule checker |
+| [`verify.py`](verify.py) | The 25-rule checker |
 | [`diagnose.py`](diagnose.py) | Rules-only diagnosis (no model) and request routing |
 | [`app.py`](app.py), [`static/index.html`](static/index.html) | FastAPI server and the single-page UI |
 | [`evals/edge_cases.py`](evals/edge_cases.py) | The 62-question end-to-end suite |

@@ -625,7 +625,7 @@ def _check(question, answer, steps, messages, g, client, model, tokens, deadline
                      problems="\n".join(f"- {p}" for p in problems))}]
     try:
         reply = _ask(client, model, messages, tokens, deadline)
-        fixed = None if reply.tool_calls else reply.content
+        fixed = None if reply.tool_calls else (reply.content or "").strip()  # live O5: leading blank lines
     except APIError as e:
         log.warning("  retry failed: %s: %s", type(e).__name__, str(e)[:300])
         fixed = None
