@@ -19,6 +19,8 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
      failing service depends on (its dependencies() list or the dependency
      path), or that calls it (blast_radius()). Only services with an open alert count, so naming the root cause
      for comparison ("unrelated to fraud-check") is fine.
+     5b. Nor an alerting service that calls the root-cause service, or that
+     it calls, at any depth in the graph.
   6. No invented people. Rule 1 only knows names that exist in the graph, so a
      made-up "Sarah Jenkins" (Gemini, Oct 16) or "Maya Lin" (round 3, story C)
      slipped through. A Title-case name on the first line of the Root cause or Page section, or
