@@ -301,3 +301,62 @@ def test_root_cause_rule_does_not_fire_on_story_c_or_a_cleared_deploy(question, 
     """Rule 17 false positives from the saved-answer scan, Oct 16."""
     problems = verify.check_answer(answer, STEPS, question, REACH)
     assert not any("has no dependency path" in p for p in problems)
+
+
+@pytest.mark.parametrize("question,answer,flagged", [
+    # D5, live Oct 16 (Gemini): the direction read backwards.
+    ("Does payments-db depend on checkoutservice?",
+     "Yes, payments-db depends on checkoutservice. The path is checkoutservice -> "
+     "paymentservice -> payments-db.", True),
+    ("Does payments-db depend on checkoutservice?",
+     "No. checkoutservice depends on payments-db, not the other way round.", False),
+    ("Does checkoutservice depend on payments-db?",
+     "Yes, checkoutservice depends on payments-db via paymentservice.", False),
+])
+def test_dependency_direction(question, answer, flagged):
+    """Rule 18: "X depends on Y" must match the graph."""
+    vocab = dict(REACH, reach=dict(REACH["reach"]))
+    problems = verify.check_answer(answer, STEPS, question, vocab)
+    assert any("depends on" in p and "does not" in p for p in problems) == flagged
+
+
+def test_failure_page_without_recent_changes_is_flagged():
+    """Rule 19, live Oct 16 (Gemini): paged checkout's owner, never looked for the cause."""
+    steps = [s for s in STEPS if s["tool"] == "who_to_page"]
+    answer = "Checkout service ke liye aap Checkout team ko page kar sakte hain."
+    q = "checkout service me errors aa rahe hai, kisko page karu?"
+    assert any("recent_changes was not called" in p
+               for p in verify.check_answer(answer, steps, q, REACH))
+    # Ownership with no failure reported needs no recent_changes.
+    assert not any("recent_changes was not called" in p
+                   for p in verify.check_answer(answer, steps, "who owns checkoutservice?", REACH))
+
+
+@pytest.mark.parametrize("metric,flagged", [("pagerank", True), ("betweenness", False),
+                                            (None, False)])
+def test_most_critical_needs_betweenness(metric, flagged):
+    """Rule 20, live Oct 16 (Gemini): "most critical" ranked by PageRank only."""
+    args = {"metric": metric} if metric else {}
+    steps = [{"tool": "critical_services", "args": args, "result": {"ranking": []}}]
+    problems = verify.check_answer("The most critical services are listed above.", steps,
+                                   "Which services are most critical?", REACH)
+    assert any("betweenness" in p for p in problems) == flagged
+
+
+def test_unrelated_uses_graph_reach_when_the_model_skipped_dependencies():
+    """Rule 5, live Oct 16 (Gemini): frontend calls adservice, so adservice is not unrelated."""
+    reach = dict(REACH, reach=dict(REACH["reach"], frontend={"adservice", "checkoutservice"}))
+    steps = STEPS + [{"tool": "recent_changes", "args": {}, "result": {
+        "deploys": [], "alerts": [{"service": "adservice", "severity": "medium",
+                                   "message": "ad inventory cache miss rate high", "minutes_ago": 10}]}}]
+    problems = verify.check_answer("Root cause: fraud-check v3.1.0.\nUnrelated: adservice.",
+                                   steps, "frontend is returning errors, what broke?", reach)
+    assert any("unrelated lists ['adservice']" in p for p in problems)
+
+
+def test_negated_dependency_claim_is_not_flagged():
+    """Rule 18 false positive from the saved-answer scan (Codestral, story C)."""
+    answer = ("The adservice does not depend on checkoutservice, nor does checkoutservice "
+              "depend on adservice.")
+    problems = verify.check_answer(answer, STEPS, "Is the adservice alert related?", REACH)
+    assert not any("in the graph it does not" in p for p in problems)

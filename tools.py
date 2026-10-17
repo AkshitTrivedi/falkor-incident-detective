@@ -225,7 +225,8 @@ def dependency_path(g, from_service, to_service):
         to_service: The other service name, e.g. "payments-db".
 
     Returns:
-        {"path": [str, ...], "latency_ms": float, "cypher": str} when connected,
+        {"path": [str, ...], "latency_ms": float, "direction": str, "cypher": str}
+        when connected ("direction" says which service depends on which),
         {"path": None, "note": str, "cypher": str} when not,
         or the _check_service error dict for an unknown name.
 
@@ -246,8 +247,15 @@ def dependency_path(g, from_service, to_service):
         params = {"a": a, "b": b}
         rows = _run(g, cypher, params)
         if rows:
-            return {"path": rows[0][0], "latency_ms": rows[0][1], "cypher": cypher,
-                    "params": params}
+            path = rows[0][0]
+            # Say which way the dependency runs, so the model cannot read
+            # "checkoutservice -> ... -> payments-db" as payments-db depending
+            # on checkoutservice (live test, Oct 16, Gemini).
+            direction = f"{path[0]} depends on {path[-1]}"
+            if a != from_service:
+                direction += f"; {from_service} does not depend on {to_service}"
+            return {"path": path, "latency_ms": rows[0][1], "direction": direction,
+                    "cypher": cypher, "params": params}
     return {"path": None, "note": f"no dependency path between {from_service} and "
                                   f"{to_service} in either direction", "cypher": cypher,
             "params": {"a": from_service, "b": to_service}}

@@ -165,14 +165,16 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "dependency_path",
         "description": "Lowest-latency call path between two services, either direction. "
-                       "path=null means they are unrelated.",
+                       "path=null means they are unrelated. 'direction' says which one "
+                       "depends on the other.",
         "parameters": {"type": "object", "properties": {
             "from_service": _SERVICE, "to_service": _SERVICE},
             "required": ["from_service", "to_service"]}}},
     {"type": "function", "function": {
         "name": "critical_services",
         "description": "Rank services by graph importance. 'betweenness' = chokepoints many "
-                       "call paths pass through; 'pagerank' = most depended on.",
+                       "call paths pass through; use it for 'most critical'. 'pagerank' = "
+                       "most depended on; use it only when asked what others depend on most.",
         "parameters": {"type": "object", "properties": {
             "metric": {"type": "string", "enum": ["betweenness", "pagerank"]},
             "limit": {"type": "integer", "description": "How many to return, default 5"}},

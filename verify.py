@@ -46,6 +46,13 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
      answer must say there is no such person.
  14. Unknown teams from the question ("Should I page the SRE team?"): the
      answer must say there is no such team.
+ 15. A real service, person or team must not be called missing.
+ 16. Graph facts with no tool call behind them are flagged.
+ 17. A root-cause deploy must be on the named services' dependency chain.
+ 18. "X depends on Y" (or "Yes" to "does X depend on Y") must match the
+     graph's direction.
+ 19. A failure question that pages someone must have run recent_changes.
+ 20. "Most critical" must use the betweenness ranking.
 
 Rules 11-14 need the denial in a sentence that names the thing: "adservice is
 not in the dependency path" does not deny that v2.0.0 exists (Gemini, Oct 17).
@@ -109,6 +116,9 @@ NOT_FOUND = ("not found", "unknown", "doesn't exist", "does not exist", "no serv
              "doesn't appear", "does not appear", "not present")
 # Rule 17: a Root cause section that blames nothing ("not found in the graph").
 _NO_CAUSE = r"\W*(?:not found|none|unknown|no root cause|undetermined)"
+# Rule 19: words that report a failure (kept in step with diagnose._INCIDENT).
+_INCIDENT = (r"\b(?:broke|broken|error|errors|5xx|fail|failing|failed|failure|down|outage|"
+             r"slow|latency|timeout|timeouts|crash\w*|degraded|not working|unavailable)\b")
 # Rule 17: a root-cause sentence that clears a deploy instead of blaming it.
 _CLEARS = (r"\b(?:not caused by|not the cause|isn't caused|is not caused|cannot|can't|"
            r"unrelated|separate incident|not related|no dependency path)\b")
@@ -465,8 +475,12 @@ def check_answer(answer, steps, question, vocab):
 
     # Rule 5: "Unrelated" must not list an alerting dependency of a service the question names.
     # The named service itself is left out, as answers say "X is not a dependency of it".
+    # The graph-wide reach map counts too. Live test, Oct 16 (Gemini): for
+    # "frontend is returning errors" it listed adservice as unrelated, though
+    # frontend calls it, because it never ran dependencies(frontend).
     asked = _mentions(q, vocab["services"])
-    on_chain = set().union(*[deps for svc, deps in facts["chains"] if svc in asked]) - asked
+    on_chain = set().union(*[deps for svc, deps in facts["chains"] if svc in asked],
+                           *[vocab.get("reach", {}).get(svc, set()) for svc in asked]) - asked
     on_chain &= facts["alerting"]
     wrongly_unrelated = _mentions(_section(a, "unrelated"), on_chain)
     if wrongly_unrelated:
@@ -598,6 +612,42 @@ def check_answer(answer, steps, question, vocab):
             if not any(svc in reach.get(a, set()) or a in reach.get(svc, set()) for a in asked):
                 problems.append(f"root cause {svc} has no dependency path to or from "
                                 f"{', '.join(sorted(asked))}")
+
+    # Rule 18: "X depends on Y" must match the graph's direction. Live test,
+    # Oct 16 (Gemini): "Does payments-db depend on checkoutservice?" -> "Yes",
+    # read off a path that runs checkoutservice -> paymentservice -> payments-db.
+    if reach is not None:
+        svc = "|".join(re.escape(n) for n in sorted(vocab["services"], key=len, reverse=True))
+        # A claim right after "not", "nor does" or "neither" is a denial.
+        claims = [(m[1], m[2]) for m in re.finditer(
+            rf"(?<![\w-])({svc})(?![\w-]) (?:does |do )?(?:depends|depend) on (?:the )?({svc})(?![\w-])",
+            plain) if not re.search(r"\b(?:not|nor|neither|never|n't)\b[\w ]{0,12}$",
+                                    plain[max(0, m.start() - 20):m.start()])]
+        ask = re.search(rf"\bdoes ({svc}) (?:\w+ )?depend on (?:the )?({svc})(?![\w-])", q)
+        if ask and re.match(r"\W*yes\b", plain):
+            claims.append((ask[1], ask[2]))
+        for x, y in dict.fromkeys(claims):
+            if y not in reach.get(x, set()):
+                problems.append(f"the answer says {x} depends on {y}, but in the graph it does not"
+                                + (f"; {y} depends on {x}" if x in reach.get(y, set()) else ""))
+
+    # Rule 19: an incident question needs recent_changes before paging. Live
+    # test, Oct 16 (Gemini): "checkout service me errors aa rahe hai, kisko
+    # page karu?" paged checkout's owner without looking for the cause, which
+    # was a Payments deploy.
+    tools_run = {s["tool"] for s in steps}
+    if (re.search(_INCIDENT, q) and _asked_services(q, vocab["services"])
+            and "who_to_page" in tools_run and "recent_changes" not in tools_run):
+        problems.append("the question reports a failure, but recent_changes was not called, "
+                        "so the page skips the cause")
+
+    # Rule 20: "most critical" is ranked by betweenness. Live test, Oct 16
+    # (Gemini) ranked by PageRank only and listed leaf databases.
+    metrics = {s["args"].get("metric") or "betweenness" for s in steps if s["tool"] == "critical_services"}
+    if (re.search(r"\bcritical\b", q) and not re.search(r"\bdepend", q)
+            and metrics and "betweenness" not in metrics):
+        problems.append("'most critical' needs the betweenness ranking, but only "
+                        f"{', '.join(sorted(metrics))} was used")
     return problems
 
 
