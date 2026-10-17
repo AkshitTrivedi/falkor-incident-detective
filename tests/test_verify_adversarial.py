@@ -407,3 +407,52 @@ def test_unrelated_must_not_list_the_root_cause_chain(unrelated, flagged):
               f"Unrelated: {unrelated}\nPage: Payments team, on-call Priya Nair.")
     problems = verify.check_answer(answer, STEPS, "paymentservice p99 latency is 4.2s, why?", REACH)
     assert any("dependency chain of the root cause" in p for p in problems) == flagged
+
+
+ALERTING = dict(REACH, alerting={"checkoutservice", "paymentservice", "payments-db", "adservice"})
+
+
+@pytest.mark.parametrize("page,flagged", [
+    # Live C2, Oct 16 (StepFun): names nobody.
+    ("the fraud-check owner — use who_to_page on fraud-check for the team and on-call person.", True),
+    ("fraud-check's owning team and on-call person — let me know if you'd like me to look that up.",
+     True),
+    ("Payments team, on-call Priya Nair.", False),
+    ("Payments team.", False),
+    ("not applicable.", False),
+])
+def test_page_section_must_name_someone(page, flagged):
+    """Rule 4b: a Page section names an on-call person or a team."""
+    answer = f"Root cause: fraud-check v3.1.0, deployed by Daniel Okafor.\nPage: {page}"
+    problems = verify.check_answer(answer, STEPS, "Is the adservice alert caused by the deploy?",
+                                   VOCAB)
+    assert any("page section" in p for p in problems) == flagged
+
+
+@pytest.mark.parametrize("answer,flagged", [
+    # Saved Nemotron Nano answer: cut off before the Page line.
+    ("Root cause: fraud-check v3.1.0, deployed by Daniel Okafor.\nUnrelated: adservice", True),
+    (GOOD, False),
+    (swap("on-call Priya Nair", "on-call: Priya"), False),
+])
+def test_who_to_page_question_needs_a_person(answer, flagged):
+    """Rule 4c: "who should I page?" is answered with an on-call person."""
+    problems = verify.check_answer(answer, STEPS, QUESTION, VOCAB)
+    assert any("asks who to page" in p for p in problems) == flagged
+
+
+@pytest.mark.parametrize("text,flagged", [
+    # Saved Ministral 8B answer: only adservice had an alert.
+    ("Unrelated: alerts on adservice, cartservice, emailservice", True),
+    # The alert message names fraud-check; fraud-check is not said to have one.
+    ('Evidence: alerts on payments-db (slow query from fraud-check) and paymentservice', False),
+    # Rules answer wording for a service with no alert.
+    ("Evidence: open alerts on cartservice: none.", False),
+    ("There are no alerts on cartservice.", False),
+])
+def test_alerts_on_must_name_alerting_services(text, flagged):
+    """Rule 10b: "alerts on X" names services with an open alert."""
+    answer = ("Root cause: fraud-check v3.1.0, deployed by Daniel Okafor.\n" + text +
+              "\nPage: Payments team, on-call Priya Nair.")
+    problems = verify.check_answer(answer, STEPS, QUESTION, ALERTING)
+    assert any("has an alert" in p for p in problems) == flagged

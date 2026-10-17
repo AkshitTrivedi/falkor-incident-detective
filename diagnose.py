@@ -313,8 +313,12 @@ def _route(g, question, steps, model_steps):
                 out = _what_broke(g, hit[0], q, steps, model_steps)
                 for n in named:
                     if n not in reach:
+                        # Live A10: cartservice was left with nobody to page.
+                        own = _step(steps, "who_to_page", g, n)
                         out["answer"] += (f"\n{n}: no dependency path to or from {only}, so this "
-                                          f"deploy does not explain it; ask about {n} on its own.")
+                                          f"deploy does not explain it. Page its owner too: "
+                                          f"{own['team']} team, on call "
+                                          f"{own['on_call'] or 'nobody listed'}.")
                 return out
         # The deploy explains none of them ("cartservice and adservice are both
         # failing"): diagnose each on its own rather than dump the tool rows.

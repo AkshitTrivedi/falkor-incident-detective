@@ -217,3 +217,15 @@ def test_summary_keeps_the_root_cause_chain_off_unrelated(g):
            "steps": steps, "path": None}
     s = app.summarize(out, verify.graph_vocabulary(g), "paymentservice p99 latency is 4.2s, why?")
     assert s["unrelated"] == ["adservice"]
+
+
+def test_no_cause_card_does_not_call_the_asked_service_unrelated(g):
+    """C3, live Oct 16 (StepFun): "Root cause: not identifiable in the graph"
+    for adservice, and the card listed adservice itself as not related."""
+    steps = [{"tool": "recent_changes", "args": {}, "result": tools.recent_changes(g)}]
+    out = {"answer": "Root cause: not identifiable in the graph.\n"
+                     "Unrelated: the other alerts are a separate incident: payments-db, "
+                     "paymentservice and checkoutservice; none has a path to adservice.",
+           "steps": steps, "path": None}
+    s = app.summarize(out, verify.graph_vocabulary(g), "adservice cache miss rate is high. What broke?")
+    assert s["no_cause"] and "adservice" not in s["unrelated"]

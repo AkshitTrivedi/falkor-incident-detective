@@ -1,4 +1,4 @@
-"""Run the answer checker over every saved model answer in docs/model-eval/.
+"""Run the answer checker over every saved model-selection answer in docs/model-eval/.
 
 Why: the checker must catch wrong answers without rejecting right ones. The
 saved answers were graded by hand, so any flag on an answer that was graded
@@ -54,7 +54,10 @@ def main():
     steps = rebuilt_steps(g, sorted(vocab["services"]))
     questions = {s: q for s, q, _ in bakeoff.QUESTIONS + bakeoff.EXTENDED}
     total = flagged = missed = 0
+    # Model-selection answers only; edge_*.jsonl runs are graded by evals/edge_cases.py.
     for path in sorted(glob.glob("docs/model-eval/*.jsonl")):
+        if path.split("/")[-1].startswith("edge_"):
+            continue
         name = path.split("/")[-1]
         for line in open(path):
             row = json.loads(line)

@@ -15,6 +15,8 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
   3. Root cause: a version named must be one of the returned deploys, and if
      people are named, at least one must be the deployer of a returned deploy.
   4. Page: if people are named, at least one must be a returned on-call person.
+     4b. A Page section must name an on-call person or a team.
+     4c. "Who should I page?" must be answered with an on-call person.
   5. Unrelated: must not list an alerting service that the tools showed the
      failing service depends on (its dependencies() list or the dependency
      path), or that calls it (blast_radius()). Only services with an open alert count, so naming the root cause
@@ -39,6 +41,7 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
      and if who_to_page ran, a real team must be the one it returned.
  10. Numbers. A percentage or a duration (ms, s) must appear in a tool result
      ("CPU 99%" is flagged when the alert said 98%). 0 and 100 are allowed.
+     10b. "Alerts on X" must name services that have an open alert.
  11. Unknown services from the question (trap L, "What depends on
      billing-service?"). If the question names a service-like word that is not
      in the graph, the answer must say so ("not in the graph", "doesn't exist").
@@ -118,7 +121,10 @@ NOT_FOUND = ("not found", "unknown", "doesn't exist", "does not exist", "no serv
              "not a service", "no service named", "no service called", "not listed",
              "doesn't appear", "does not appear", "not present")
 # Rule 17: a Root cause section that blames nothing ("not found in the graph").
+# "not identifiable in the graph" is live C3 (StepFun, Oct 16).
 _NO_CAUSE = (r"\W*(?:not found|none|unknown|no root cause|undetermined|"
+             r"not (?:identifiable|identified|determined|determinable|clear)|"
+             r"(?:cannot|can't|could not|couldn't) be (?:identified|determined)|"
              r"no (?:recent )?(?:deploy|change)s? (?:or \w+ )?(?:in the graph )?explains?)")
 # Rule 19: words that report a failure (kept in step with diagnose._INCIDENT).
 _INCIDENT = (r"\b(?:broke|broken|error|errors|5xx|fail|failing|failed|failure|down|outage|"
@@ -174,8 +180,9 @@ def graph_vocabulary(g):
 
     Returns:
         {"services": set, "people": set, "versions": set, "teams": set,
+         "alerting": set of services with an unresolved alert,
          "reach": {service: {every service it depends on, at any depth}}},
-        all lower-case. "reach" is for rule 17.
+        all lower-case. "reach" is for rules 5b, 17 and 18; "alerting" for 5b and 10b.
     """
     def column(cypher):
         return {row[0].lower() for row in g.ro_query(cypher).result_set if row[0]}
@@ -186,6 +193,8 @@ def graph_vocabulary(g):
             "people": column("MATCH (p:Person) RETURN p.name"),
             "versions": column("MATCH (d:Deploy) RETURN DISTINCT d.version"),
             "teams": column("MATCH (t:Team) RETURN t.name"),
+            "alerting": column("MATCH (a:Alert)-[:FIRED_ON]->(s:Service) "
+                               "WHERE NOT a.resolved RETURN DISTINCT s.name"),
             "reach": reach}
 
 
@@ -476,6 +485,41 @@ def check_answer(answer, steps, question, vocab):
     if page_people and not page_people & facts["on_call"]:
         problems.append(f"page names {sorted(page_people)}, but who_to_page did not "
                         "return them as on call")
+
+    # Rule 4b: a Page section must name who to page. Live C2, Oct 16 (StepFun):
+    # "Page: the fraud-check owner — use who_to_page on fraud-check" named nobody.
+    page = _section(a, "page")
+    if (page.strip() and not page_people and not _mentions(page, vocab.get("teams", set()))
+            and not re.match(r"\W*(?:none|no one|nobody|n/a|not needed|not applicable|no page)", page)):
+        problems.append("the page section names no on-call person or team; "
+                        "call who_to_page and name them")
+
+    # Rule 4c: "who should I page?" must be answered with a person. Saved
+    # Nemotron Nano answer (round 4, story A) was cut off before its Page line.
+    if (re.search(r"\bwho (?:should|do|can|must|to) (?:i |we )?(?:page|wake|call|contact)|"
+                  r"\bkisko page\b", q)
+            and not unknown_names(q, vocab)
+            # "on-call: Priya" names her too.
+            and not _mentions(a, facts["on_call"] | {n.split()[0] for n in facts["on_call"]})
+            and not re.search(r"\b(?:no one|nobody|not on call|nobody listed)\b", a)):
+        problems.append("the question asks who to page, but the answer names no on-call "
+                        "person from who_to_page")
+
+    # Rule 10b: "alerts on X, Y" must name services that have an open alert.
+    # Saved Ministral 8B answer (round 4, story A): "Unrelated: alerts on
+    # adservice, cartservice, currencyservice, ..." where only adservice had one.
+    # Only the list right after "alerts on" counts: in "alerts on payments-db
+    # (slow query from fraud-check)" fraud-check is not said to have an alert,
+    # and "open alerts on cartservice: none" says it has none.
+    alerting = facts["alerting"] | vocab.get("alerting", set())
+    svc = "|".join(re.escape(n) for n in sorted(vocab["services"], key=len, reverse=True))
+    listed = rf"(?:{svc})(?![\w-])(?:\s*(?:,|and|&)\s*(?:{svc})(?![\w-]))*"
+    for m in re.finditer(rf"(?<!no )(?<!without )\balerts? on ({listed})(\W*none)?",
+                         re.sub(r"[`*]", "", a)):
+        if m[2]:
+            continue
+        for name in sorted(_mentions(m[1], vocab["services"]) - alerting):
+            problems.append(f"the answer says {name} has an alert, but it has no open alert")
 
     # Rule 5: "Unrelated" must not list an alerting dependency of a service the question names.
     # The named service itself is left out, as answers say "X is not a dependency of it".

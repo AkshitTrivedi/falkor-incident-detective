@@ -225,3 +225,10 @@ def test_several_services_none_explained_get_one_block_each(g):
 def test_who_is_person_goes_to_rules(g, question, rules):
     """Live Oct 16: models have no person tool and guessed (P1, P2)."""
     assert diagnose.needs_no_model(g, question) == rules
+
+
+def test_failing_service_the_deploy_does_not_explain_gets_its_own_page(g):
+    """Live A10, Oct 16: cartservice was failing too, and nobody was paged for it."""
+    out = diagnose.rule_answer(g, "checkoutservice and cartservice are both failing, what broke?")
+    assert "Priya Nair" in out["answer"]  # fraud-check's owner, for checkoutservice
+    assert "cartservice" in out["answer"] and "Omar Haddad" in out["answer"]

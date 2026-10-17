@@ -292,6 +292,10 @@ def summarize(out, vocab, question=""):
     if root:
         keep |= reach.get(root["service"], set())
         keep |= {svc for svc, deps in reach.items() if root["service"] in deps}
+    if no_cause:
+        # Live C3: "adservice cache miss rate is high" found no cause, and the
+        # card listed adservice itself as "Not related" to its own question.
+        keep |= verify._asked_services(question.lower(), vocab["services"])
     unrelated = sorted(named - keep)
     related -= set(unrelated)
     # Names in the question the graph lacks, so the card can say so up front
