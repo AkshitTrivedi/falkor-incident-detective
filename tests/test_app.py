@@ -251,3 +251,13 @@ def test_card_pages_both_owners_in_the_order_the_answer_gives(g):
     s = app.summarize({"answer": r["answer"], "steps": r["steps"], "path": r["path"]},
                       verify.graph_vocabulary(g), "checkoutservice and cartservice are both failing")
     assert [p["on_call"] for p in s["pages"]] == ["Priya Nair", "Omar Haddad"]
+
+
+def test_no_cause_card_shows_no_failure_path(g):
+    """Live, Oct 16: the adservice no-cause card carried the path of the
+    payments incident, which the rules checked while ruling out the deploy."""
+    r = diagnose.rule_answer(g, "adservice cache miss rate is high. What broke?")
+    out = {"answer": r["answer"], "steps": r["steps"], "path": ["checkoutservice", "paymentservice",
+                                                               "fraud-check"]}
+    s = app.summarize(out, verify.graph_vocabulary(g), "adservice cache miss rate is high. What broke?")
+    assert s["no_cause"] and s["path"] is None

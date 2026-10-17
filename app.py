@@ -321,6 +321,11 @@ def summarize(out, vocab, question=""):
         return min(hits) if hits else None
     pages = sorted((p for p in pages if named_at(p) is not None), key=named_at)
     page = pages[0] if pages else None
+    if no_cause and not root:
+        # Live test, Oct 16: "adservice cache miss rate is high" showed the
+        # checkoutservice → fraud-check path from another service's check, on a
+        # card that says no cause was found.
+        path = None
     return {"path": path, "related": sorted(related),
             "root_cause": root and {k: root[k] for k in ("service", "version", "by")},
             "unrelated": unrelated, "page": page, "pages": pages,
