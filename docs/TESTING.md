@@ -6,7 +6,7 @@ A model that sounds sure and is wrong is the main risk of an on-call agent. This
 
 | Layer | What it checks | How to run |
 |---|---|---|
-| **Unit tests** (268) | Tools against a real FalkorDB graph, the checker on hand-written good and bad answers, request routing, the verdict card | `python -m pytest -q` (needs local FalkorDB) |
+| **Unit tests** (276) | Tools against a real FalkorDB graph, the checker on hand-written good and bad answers, request routing, the verdict card | `python -m pytest -q` (needs local FalkorDB) |
 | **Checker false-positive scan** | The checker must not reject a *correct* answer. It is run over all 456 saved model answers in [`model-eval/`](model-eval/), with tool results rebuilt from the live graph | `python -m scripts.checker_scan` |
 | **End-to-end suite** (62 questions) | The whole app as a user sees it: answer text, verdict card, and the "checked" badge | `python evals/edge_cases.py <app url> out.jsonl [ids...]` |
 
@@ -20,7 +20,7 @@ Unit tests use stub tool results, and the checker only catches claims the tools 
 2. **Card:** root cause, names the graph lacks, unrelated services, who to page, rollback flag.
 3. **Badge:** an answer the checker flagged must never be shown as "Checked against the graph".
 
-Plus two global checks: no person outside the graph is named, and after the injection cases the graph still has its 22 services.
+Plus two global checks: no person outside the graph is named, and after the injection cases the graph still has as many services as when the run started (22 on the demo graph, 300 at scale).
 
 | Slice | Cases | Examples |
 |---|---|---|
@@ -58,6 +58,7 @@ Plus two global checks: no person outside the graph is named, and after the inje
 | 9 | Page: the team named must be real, and the one `who_to_page` returned | |
 | 10 | A percentage or duration must appear in a tool result | "CPU 99%" when the alert said 98% |
 | 10b | "Alerts on X, Y" must name services that have an open alert | "Unrelated: alerts on adservice, cartservice, currencyservice, …" when only adservice had one |
+| 10c | "N services" (or callers, dependents, dependencies) must match the length of a list a tool returned | "49 services are affected" when `blast_radius` returned 47 (300-service graph) |
 | 11 | A service in the question the graph lacks must be called out | `billing-service` |
 | 12 | A version in the question the graph lacks must be called out | `paymentservice v2.0.0` |
 | 13 | A person in the question the graph lacks must be called out | "Is Sarah Jenkins on call?" |
@@ -106,6 +107,23 @@ One review pass also caught the checker itself: gpt-oss writes names with a narr
 The checker looks for claims the graph does not support. It does not judge whether an answer is complete, so the last row is a known limit, not a bug.
 
 The same checker, run over all 301 live model answers from the 16 Oct test runs, flags only answers that were wrong when read by hand.
+
+## At 300 services
+
+`python seed.py --scale` writes the `incidents_scale` graph: the demo graph plus 278 synthetic services (1,523 edges, 7,834 deploys, 2,431 resolved alerts over 90 days). Run the app and the suite with `GRAPH_NAME=incidents_scale` on both, so the injection check counts the right graph.
+
+| Run (16 Oct 2026) | Passed | Notes |
+|---|---|---|
+| Unit tests for scale mode (`tests/test_seed.py`) | all | Size, demo dependencies unchanged, stories and traps intact, no cycles, no path over 8 hops, auto re-seed keeps the size |
+| Suite, no models | 60 / 62 | K1, K2: synthetic services really are more central than the demo's, so the demo keywords miss |
+| Suite, live models | 60 / 62 | Same K1, K2. StepFun Step-5 answered 33 (3 after a retry), Nemotron 4, rules 25 (10 after a model answer failed the checker) |
+| All 62 questions through the UI with Playwright | 62 / 62 | Every card rendered, no console errors, screenshots read by hand |
+
+What the bigger graph found:
+
+- **Miscounts.** The first live run said "49 services" for a 47-service blast radius, and "36" for 35. Hop lists were right, the totals were not. Tools now return a `count`, and rule 10c rejects a service count that matches no list a tool returned.
+- **Unreadable lists.** A misspelt service listed all 300 names, and "did you mean" matched `pricing-service` for `billing-service`. Now: six nearest names, and "did you mean" only above a 0.85 similarity.
+- **Unreadable map.** The UI drew a 300-node graph 14,835 px tall. It now shows only the services each answer touches. Browser screenshots found two answers that still fell back to the full map, "Does cartservice depend on payments-db?" (no path, so no services returned) and "Who is on call for payments?" (team only). Both now show the services they name.
 
 ## Beyond the checker: routing questions that need no model
 

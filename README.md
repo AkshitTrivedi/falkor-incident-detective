@@ -12,7 +12,7 @@ Built solo for Graph Hacks (WeMakeDevs × FalkorDB), Oct 15–18 2026. **Track 0
 
 - **Problem.** At 3 a.m. the question is never "what is the CPU?". It is *which of the 20 services upstream is really at fault, did a deploy cause it, and who owns it?* That is a connected-data question: services call services, deploys land on services, alerts fire on services, teams own services.
 - **How it works.** An LLM investigates through six fixed, read-only graph tools. It never writes Cypher. Every Cypher query that ran is shown next to the answer.
-- **Why trust it.** A 25-rule checker compares every sentence of the answer with what the graph returned. Made-up people, services, versions, numbers, backwards dependencies and false "not in the graph" denials are caught. A bad answer gets one retry. If that fails too, a rules-only diagnosis answers with no model at all.
+- **Why trust it.** A 26-rule checker compares every sentence of the answer with what the graph returned. Made-up people, services, versions, numbers, backwards dependencies and false "not in the graph" denials are caught. A bad answer gets one retry. If that fails too, a rules-only diagnosis answers with no model at all.
 
 ## Try it in five commands
 
@@ -30,7 +30,7 @@ pip install -r requirements.txt
 cp .env.example .env        # then paste a key into .env
 
 # 4. Load the demo graph: 22 services, a live incident and a red herring
-python seed.py
+python seed.py              # or: python seed.py --scale  (300 services, same incident)
 
 # 5. Run the app and open http://localhost:8765
 uvicorn app:app --port 8765
@@ -62,7 +62,7 @@ flowchart LR
     R -- yes --> A[LLM agent<br/>fallback chain of 4 models]
     A -- "picks 1 of 6 tools" --> T[Read-only tools<br/>parameterised Cypher]
     T <--> G[(FalkorDB<br/>incidents graph)]
-    A --> C{Checker<br/>25 rules}
+    A --> C{Checker<br/>26 rules}
     C -- pass --> OUT
     C -- fail --> A2[One retry]
     A2 --> C2{Checker}
@@ -163,11 +163,11 @@ Details that took testing against FalkorDB v4.22.0, worth knowing if you build o
 
 ## The checker
 
-A fluent wrong answer is worse than no answer at 3 a.m. After the model writes its answer, [`verify.py`](verify.py) reads it next to the raw tool results and lists every claim the graph does not support. An empty list is a pass. The 25 rules (numbered 1–21, plus 4b, 4c, 5b and 10b) fall into five groups:
+A fluent wrong answer is worse than no answer at 3 a.m. After the model writes its answer, [`verify.py`](verify.py) reads it next to the raw tool results and lists every claim the graph does not support. An empty list is a pass. The 26 rules (numbered 1–21, plus 4b, 4c, 5b, 10b and 10c) fall into five groups:
 
 | Group | What it catches | Example it caught |
 |---|---|---|
-| **Invented facts** (1–4, 6–10b) | A person, service, team, version or number no tool returned; an alert on a service that has none | An on-call "Sarah Jenkins" who is not in the graph |
+| **Invented facts** (1–4, 6–10c) | A person, service, team, version or number no tool returned; an alert on a service that has none; a service count no tool list has | An on-call "Sarah Jenkins" who is not in the graph |
 | **Wrong reasoning** (5, 5b, 17, 18) | An alerting service on the failure chain listed as "unrelated"; a root cause with no path to the failing service; "X depends on Y" backwards | "Yes, payments-db depends on checkoutservice" (it is the other way round) |
 | **Questions about things that do not exist** (11–15) | A made-up service, version, person or team in the question that the answer does not call out; a real name wrongly called missing | "Did the paymentservice v2.0.0 deploy cause the latency?" answered as if v2.0.0 existed |
 | **Skipped work** (16, 19, 20) | Graph facts with no tool call behind them; paging someone without looking at recent deploys; ranking "most critical" by anything but betweenness | An empty reply that said "I'll check…" and ran nothing |
@@ -183,7 +183,7 @@ All numbers are from the code in this repository and can be reproduced with the 
 
 | Run | Cases | Passed | What it measures |
 |---|---|---|---|
-| Unit tests | 268 | 268 | Tools, checker, routing, card, no-key path |
+| Unit tests | 276 | 276 | Tools, checker, routing, card, no-key path |
 | Edge-case suite, no models (rules only) | 62 | 62 | Deterministic answers from the rules diagnosis |
 | Edge-case suite, live models | 62 | 62 | Full chain: real LLMs, checker, retry, card |
 | Checker over saved model answers | 456 | 42 rejected | All 42 read by hand: every one a real defect, no false positives |
@@ -215,9 +215,33 @@ python evals/edge_cases.py http://localhost:8765 out.jsonl     # 62-question sui
 
 The 62 questions cover the three stories (14), red herrings (3), blast radius (5), dependency paths and directions (5), criticality (2), owners and on-call (7), people (3), rollback (2), **false premises the agent must reject (11)**, out-of-scope questions (7), and write or injection attempts (3). Each answer is graded on its text, on the verdict card, and on the "checked" badge.
 
+### Tested at 300 services
+
+`python seed.py --scale` builds a second graph, `incidents_scale`: the same 22 demo services and incident plus 278 synthetic ones in 35 domains, called in layers (bff → api → service → worker → data stores). That gives **300 services, 1,523 `DEPENDS_ON` edges, 40 teams, 155 people, and 90 days of history: 7,834 deploys and 2,431 resolved alerts**. The synthetic services only ever call demo services, never the reverse, so the incident's answer stays the same while every traversal has far more to search. The same 62 questions were run against it on 16 Oct 2026.
+
+| Measured on the 300-service graph | Time |
+|---|---|
+| Seed the whole graph | 0.2 s |
+| Traversal tools (`blast_radius` on `feature-store`: 56 services, 6 hops) | about 1 ms |
+| Betweenness over all 300 services (`critical_services`) | 14 ms |
+| Whole-graph endpoint for the UI (187 KB) | 30–55 ms |
+| UI graph layout | 0.47 s |
+| Answer with no model (rules diagnosis) | 0.1–1.0 s |
+| Answer from a live model | 3–87 s, median 11 s |
+
+| Run on the 300-service graph | Passed |
+|---|---|
+| Edge-case suite, no models | 60 / 62 |
+| Edge-case suite, live models | 60 / 62 |
+| All 62 questions typed into the UI in a real browser (Playwright) | 62 / 62 rendered, no console errors |
+
+The two misses in both runs are K1 and K2 ("which services are most critical?"). The grader expects the demo's `paymentservice` and `checkoutservice`; at this size the synthetic chokepoints really do rank higher (`seller-worker` scores 92.8 on betweenness, while `checkoutservice` ranks 19th), and the answers say so. Every live answer was read by hand, and each count was checked against the graph: `payments-db` reaches 47 services, `fraud-check` 35, `redis-cart` 44, `feature-store` 56. An earlier run here gave "49 services" where the tool returned 47; checker rule 10c now catches a count no tool returned.
+
+Two things changed for the bigger graph. The UI shows only the services the answer touches (a 300-node map is unreadable), and a misspelt service gets "Did you mean checkoutservice?" plus six nearest names instead of a list of 300.
+
 ## Limitations
 
-- **The data is synthetic.** One graph, three stories. The suite shows the agent behaves on this graph, not on yours.
+- **The data is synthetic.** The 22-service demo graph and the 300-service scale graph share one set of stories. The suites show the agent behaves on these graphs, not on yours.
 - **The suite grades by keywords.** A keyword can pass a wrong answer. In an earlier run an answer listed `checkoutservice` as unrelated and still passed the grader; reading every answer by hand found it, and rule 5b now catches it. All answers in the results above were read by hand as well.
 - **The checker only knows what the tools return.** It cannot tell that an answer is badly worded or leaves out something useful, only that a claim is unsupported.
 - **Free tiers move.** Groq's free tier allows 200,000 tokens a day; once that is spent the chain continues on the next provider, which is slower. Model rankings were measured on one day from India.
@@ -231,7 +255,7 @@ The 62 questions cover the three stories (14), red herrings (3), blast radius (5
 | [`seed.py`](seed.py) | Builds the demo graph (re-runnable) |
 | [`tools.py`](tools.py) | The six read-only tools and their Cypher |
 | [`agent.py`](agent.py) | LLM loop, provider fallback chain, retry, deadlines |
-| [`verify.py`](verify.py) | The 25-rule checker |
+| [`verify.py`](verify.py) | The 26-rule checker |
 | [`diagnose.py`](diagnose.py) | Rules-only diagnosis (no model) and request routing |
 | [`app.py`](app.py), [`static/index.html`](static/index.html) | FastAPI server and the single-page UI |
 | [`evals/edge_cases.py`](evals/edge_cases.py) | The 62-question end-to-end suite |
