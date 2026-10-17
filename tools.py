@@ -273,7 +273,7 @@ def critical_services(g, metric="betweenness", limit=5):
     Args:
         g: FalkorDB Graph handle.
         metric: "betweenness" (default) or "pagerank".
-        limit: How many services to return (clamped to the 22 in the graph).
+        limit: How many services to return, at most 22 (keeps the reply small).
 
     Returns:
         {"metric": str, "ranking": [{"service": str, "score": float}, ...], "cypher": str}
@@ -294,7 +294,7 @@ def critical_services(g, metric="betweenness", limit=5):
                   "RETURN node.name, score ORDER BY score DESC LIMIT $limit")
     else:
         return {"error": "metric must be 'betweenness' or 'pagerank'"}
-    # Clamp the LLM-supplied limit to the number of services in the seed.
+    # Clamp the LLM-supplied limit: the agent needs the top few, not the list.
     params = {"limit": min(int(limit), 22)}
     rows = _run(g, cypher, params)
     return {"metric": metric, "ranking": [{"service": n, "score": round(s, 4)} for n, s in rows],

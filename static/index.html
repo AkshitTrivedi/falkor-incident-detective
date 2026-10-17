@@ -624,6 +624,7 @@ function stylesheet() {
     { selector: 'edge[rel = "OWNS"], edge[rel = "ON_CALL"]', style: { 'line-color': C.ok, 'target-arrow-color': C.ok } },
     // States.
     { selector: '.faded', style: { 'opacity': .3 } },
+    { selector: '.offstage', style: { 'display': 'none' } },
     { selector: '.context', style: { 'opacity': .6 } },
     { selector: 'node.muted', style: { 'opacity': .6, 'border-style': 'dashed', 'border-color': C.faint, 'underlay-opacity': 0, 'color': C.muted } },
     { selector: 'edge.lit', style: { 'line-color': C.faint, 'target-arrow-color': C.faint, 'width': 1.8 } },
@@ -693,14 +694,24 @@ async function loadGraph() {
  */
 function layout() {
   const core = cy.nodes('[kind = "service"]');
+  // network-simplex gives the tidiest layers but took 4.7 s on 300 services
+  // (seed.py --scale); tight-tree took 0.47 s, so big graphs use it.
+  const ranker = core.length > BIG_GRAPH ? 'tight-tree' : 'network-simplex';
   core.union(core.edgesWith(core)).layout({ name: 'dagre', rankDir: 'LR', nodeSep: 12, rankSep: 40,
-    edgeSep: 8, ranker: 'network-simplex', animate: false, fit: false }).run();
-  cy.nodes('[kind = "deploy"]').forEach(d => {
+    edgeSep: 8, ranker, animate: false, fit: false }).run();
+  pinDeploys(cy.nodes('[kind = "deploy"]'));
+  fullPositions = Object.fromEntries(cy.nodes().map(n => [n.id(), { ...n.position() }]));
+  staged = false;
+  setHome();
+}
+
+/** Pin each deploy node just above its service, stacked if there are several. */
+function pinDeploys(deploys) {
+  deploys.forEach(d => {
     const s = cy.getElementById(svc(d.data('service')));
     const stacked = cy.nodes(`[kind = "deploy"][service = "${d.data('service')}"]`).indexOf(d);
     d.position({ x: s.position('x'), y: s.position('y') - s.outerHeight() / 2 - 18 - stacked * 28 });
   });
-  setHome();
 }
 
 /**
@@ -708,7 +719,7 @@ function layout() {
  * at the bottom for the team and on-call nodes added when paging.
  */
 function setHome() {
-  cy.fit(cy.nodes('[!ephemeral]'), 24);
+  cy.fit(cy.nodes('[!ephemeral]').not('.offstage'), 24);
   cy.zoom({ level: Math.min(1.4, cy.zoom()), renderedPosition: { x: cy.width() / 2, y: cy.height() * 0.45 } });
   home = { zoom: cy.zoom(), pan: { ...cy.pan() } };
 }
@@ -724,6 +735,64 @@ function goHome() {
   if (Math.abs(cy.zoom() - home.zoom) < 1e-3 && Math.abs(p.x - home.pan.x) < 1 && Math.abs(p.y - home.pan.y) < 1) return;
   cy.stop(true);
   cy.animate({ zoom: home.zoom, pan: home.pan, duration: 400, easing: 'ease-in-out-cubic' });
+}
+
+// ============================================================================
+// Big graphs (seed.py --scale): show only what the answer is about
+// ============================================================================
+
+// Up to BIG_GRAPH services the whole graph is drawn and an answer only changes
+// the highlight. A 300-service layout is about 15,000 px tall, so a three-hop
+// path ends up thousands of pixels apart; there, each answer hides every
+// service its tools did not return and lays out just the rest.
+const BIG_GRAPH = 40;
+let fullPositions = null;   // node id -> position from the full layout, to restore
+let staged = false;
+
+/** Services an answer's tool results and verdict name, as node ids. */
+function answerServices(out) {
+  const names = new Set(), s = out.summary;
+  const add = x => { if (x) names.add(x); };
+  out.steps.forEach(({ result: r }) => {
+    if (!r || r.error) return;
+    add(r.service);
+    (r.depends_on || []).forEach(d => add(d.service));
+    (r.affected || []).forEach(d => add(d.service));
+    (r.ranking || []).forEach(d => add(d.service));
+    (r.path || []).forEach(add);
+    (r.deploys || []).forEach(d => add(d.service));
+    (r.alerts || []).forEach(a => add(a.service));
+  });
+  (s.path || []).forEach(add); (s.related || []).forEach(add); (s.unrelated || []).forEach(add);
+  add(s.root_cause?.service); (s.pages || []).forEach(p => add(p.service));
+  return [...names].map(svc).filter(id => cy.getElementById(id).nonempty());
+}
+
+/** On a big graph, hide what `out` does not touch and lay out the rest. */
+function stage(out) {
+  if (cy.nodes('[kind = "service"]').length <= BIG_GRAPH) return;
+  const ids = answerServices(out);
+  if (!ids.length) { unstage(); return; }
+  const keep = cy.collection();
+  ids.forEach(id => keep.merge(cy.getElementById(id)));
+  const deploys = cy.nodes('[kind = "deploy"]').filter(d => keep.contains(cy.getElementById(svc(d.data('service')))));
+  cy.elements().addClass('offstage');
+  keep.union(deploys).union(keep.edgesWith(keep)).union(deploys.connectedEdges()).removeClass('offstage');
+  // Wider gaps than the full layout: steps add a second label line ("#1 · 92.8").
+  keep.union(keep.edgesWith(keep)).layout({ name: 'dagre', rankDir: 'LR', nodeSep: 36, rankSep: 60,
+    edgeSep: 8, ranker: 'network-simplex', animate: false, fit: false }).run();
+  pinDeploys(deploys);
+  staged = true;
+  setHome();
+}
+
+/** Bring back the whole graph and its full layout. */
+function unstage() {
+  if (!staged) return;
+  cy.elements().removeClass('offstage');
+  cy.nodes().forEach(n => { const p = fullPositions?.[n.id()]; if (p) n.position(p); });
+  staged = false;
+  setHome();
 }
 
 /** Header status: the Live dot, then `html` (trusted markup built from numbers). */
@@ -1032,6 +1101,7 @@ function updateStepper() {
 
 /** Focus `node` and its direct neighbours, and show its details in the inspector. */
 function focusNode(node) {
+  if (node.hasClass('offstage')) unstage();   // searched for a service the answer hid
   const hood = node.closedNeighborhood();
   resetMarks();
   cy.elements().not(hood).addClass('faded');
@@ -1331,6 +1401,7 @@ function renderResult(entry) {
   inv.querySelectorAll('[data-page]').forEach(b => b.onclick = () => copyPage(q, out, pages[+b.dataset.page], b));
   stopReplay();
   current = { out, list }; pos = -1;
+  stage(out);
   $('panel').scrollTop = 0;
   replay();
 }
@@ -1437,7 +1508,7 @@ $('panel').addEventListener('click', e => {
 $('prev').onclick = () => stepBy(-1);
 $('next').onclick = () => stepBy(1);
 $('replay').onclick = () => { closeInspector(); replay(); };
-$('showAll').onclick = () => { closeInspector(); showAll(); goHome(); };
+$('showAll').onclick = () => { closeInspector(); showAll(); unstage(); goHome(); };
 $('closeInspector').onclick = closeInspector;
 $('legendBtn').onclick = () => {
   const open = $('legend').hidden;

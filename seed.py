@@ -23,6 +23,7 @@ Running this script deletes and rebuilds the graph.
 
 Usage:
   python seed.py                                    # local Docker
+  python seed.py --scale 300                        # 300-service graph, "incidents_scale"
   FALKORDB_URL=$FALKORDB_CLOUD_URL python seed.py   # FalkorDB Cloud
 """
 import logging
@@ -128,6 +129,121 @@ PEOPLE = {
 }
 
 
+# --- Scale mode: a larger synthetic platform around the same demo services ---
+#
+# `python seed.py --scale 300` adds synthetic services until the graph has 300,
+# with teams, people and 90 days of deploys and resolved alerts. The demo
+# graph above is kept exactly: synthetic services only ever CALL demo services,
+# never the other way round, so every demo service depends on exactly what it
+# did before and Stories A-C give the same answers. What changes is what a
+# bigger graph changes: more callers in each blast radius, a centrality
+# ranking over 300 services, and much more history to search.
+#
+# Rules the generator keeps, each one a question in evals/edge_cases.py:
+#   - nothing calls api-gateway (it stays the entry point);
+#   - layers only call downwards, so the graph has no cycles, and the longest
+#     chain stays within tools.MAX_HOPS (8);
+#   - no name the demo questions use as a trap: billing-service, ledger, SRE,
+#     a second Priya, Omar or Daniel, version v2.0.0 or a second v3.1.0;
+#   - every background deploy and alert is older than 2 hours and every alert
+#     is resolved, so "the last hour" still holds only the story.
+
+SCALE_DOMAINS = [
+    "search", "loyalty", "pricing", "tax", "reviews", "wishlist", "subscription", "refunds",
+    "promotions", "analytics", "audit", "geo", "media", "notifications", "returns", "warehouse",
+    "fulfilment", "identity", "consent", "experiments", "seller", "marketplace", "giftcards",
+    "support", "chat", "recsys", "ranking", "fx", "invoices", "partners", "affiliates",
+    "content", "localization", "compliance", "risk-scoring",
+]
+# suffix -> (tier, level). Level 0 is storage; a service only calls lower levels.
+SCALE_ROLES = [("-db", "data", 0), ("-cache", "data", 0), ("-queue", "data", 0),
+               ("-worker", "backend", 1), ("-service", "backend", 2), ("-api", "backend", 3),
+               ("-bff", "edge", 4)]
+SCALE_FIRST = ["Aiden", "Bea", "Carlos", "Dana", "Emeka", "Farah", "Gus", "Hiro", "Ines", "Jonas",
+               "Kira", "Leo", "Marta", "Nikhil", "Olga", "Pablo", "Quinn", "Rosa", "Sven", "Tara",
+               "Uma", "Viktor", "Wen", "Ximena", "Yusuf", "Zoe", "Anika", "Bruno", "Chloe", "Dev"]
+SCALE_LAST = ["Abbott", "Banerjee", "Costa", "Dubois", "Eriksen", "Fujita", "Garcia", "Huang",
+              "Ivanova", "Jensen", "Kowalski", "Larsen", "Moreau", "Novak", "Okoro", "Park",
+              "Quintero", "Reyes", "Schmidt", "Tanaka", "Uddin", "Varga", "Weber", "Yilmaz"]
+SCALE_HISTORY_DAYS = 90
+
+
+def scale_topology(n_services):
+    """Return the synthetic services, edges, teams and people for scale mode.
+
+    Deterministic (fixed seed 7), so the same `n_services` always gives the
+    same graph. Demo services and edges are not included; seed() adds these
+    on top of SERVICES, DEPENDS_ON, TEAMS and PEOPLE.
+
+    Args:
+        n_services: Total services wanted, demo services included (> 22).
+
+    Returns:
+        (services, edges, teams, people):
+          services: [(name, tier, criticality)]
+          edges:    [(caller, callee, weight_ms)]
+          teams:    {team: [service, ...]}
+          people:   {team: [name, ...]}   the first one is on call
+    """
+    rng = random.Random(7)
+    extra = n_services - len(SERVICES)
+    # Names: domain + role, in domain order, so each domain is a small stack
+    # (its db, cache, worker, service, api, bff) owned by one team.
+    names = [(d, d + suffix, tier, level) for d in SCALE_DOMAINS
+             for suffix, tier, level in SCALE_ROLES]
+    if extra > len(names):  # more than 245 extra: number the domains ("search-2-api")
+        names += [(f"{d}-{k}", f"{d}-{k}{suffix}", tier, level)
+                  for k in range(2, extra // len(names) + 3) for d in SCALE_DOMAINS
+                  for suffix, tier, level in SCALE_ROLES]
+    names = names[:extra]
+    services = [(name, tier, rng.choice([1, 2, 2, 3, 3])) for _, name, tier, _ in names]
+    level = {name: lvl for _, name, _, lvl in names}
+
+    # Demo services a synthetic service may call, by the level it calls from.
+    # Only edge services (level 4) call frontend, so the longest chain is
+    # bff -> frontend -> checkout -> payment -> fraud-check -> risk-model ->
+    # feature-store (6 hops); api -> service -> worker -> checkoutservice -> ...
+    # is at most 8.
+    demo_backend = [s for s, tier, _ in SERVICES if tier == "backend"]
+    demo_data = [s for s, tier, _ in SERVICES if tier in ("data", "external")]
+    by_level = {lvl: [n for n, l in level.items() if l == lvl] for lvl in range(5)}
+    edges = set()
+    for name, lvl in level.items():
+        if lvl == 0:
+            continue
+        lower = [n for l in range(lvl) for n in by_level[l]]
+        same_domain = [n for n in lower if n.rsplit("-", 1)[0] == name.rsplit("-", 1)[0]]
+        # Its own stack first (an api calls its service, a service its db), then
+        # a few other domains, then sometimes the demo platform.
+        picks = same_domain[:2] + rng.sample(lower, min(len(lower), rng.randint(4, 10)))
+        if lvl >= 2 and rng.random() < 0.35:
+            picks.append(rng.choice(demo_backend))
+        if rng.random() < 0.25:
+            picks.append(rng.choice(demo_data))
+        if lvl == 4 and rng.random() < 0.3:
+            picks.append("frontend")
+        for callee in picks:
+            if callee != name:
+                edges.add((name, callee, rng.randint(1, 60)))
+    # Every storage service needs a caller, or it would hang off its team only.
+    called = {e[1] for e in edges}
+    for name in by_level[0]:
+        if name not in called:
+            caller = rng.choice([n for l in (1, 2) for n in by_level[l]])
+            edges.add((caller, name, rng.randint(1, 20)))
+
+    # Teams: one per domain stack (numbered domains share their base team).
+    teams = {}
+    for domain, name, _, _ in names:
+        base = domain.rsplit("-", 1)[0] if domain[-1].isdigit() else domain
+        teams.setdefault(base.replace("-", " ").title(), []).append(name)
+    taken = {p.split()[0] for ps in PEOPLE.values() for p in ps} | {"Sarah", "Akshit"}
+    pool = [f"{f} {l}" for l in SCALE_LAST for f in SCALE_FIRST if f not in taken]
+    rng.shuffle(pool)
+    people = {t: [pool.pop() for _ in range(4)] for t in teams}
+    return services, sorted(edges), teams, people
+
+
 def build_rows(now_ms):
     """Generate the deploy and alert rows, with times relative to `now_ms`.
 
@@ -186,7 +302,47 @@ def build_rows(now_ms):
     return deploys, alerts
 
 
-def seed(g, now_ms=None):
+def scale_history(now_ms, teams, people):
+    """Generate 90 days of background deploys and resolved alerts for scale mode.
+
+    Covers every service, demo ones included. All rows are older than 2 hours
+    and every alert is resolved, so the last hour still holds only the story.
+    Versions v2.0.0 and v3.1.0 are never used: questions rely on the first not
+    existing and the second being only the Story A deploy.
+
+    Args:
+        now_ms: Reference time in epoch milliseconds.
+        teams: {team: [service, ...]} for every team, demo and synthetic.
+        people: {team: [person, ...]} for every team.
+
+    Returns:
+        (deploys, alerts) shaped like build_rows() output.
+    """
+    rng = random.Random(11)
+    deploys, alerts = [], []
+    span = (2 * HOUR, SCALE_HISTORY_DAYS * DAY)
+    for team, svcs in sorted(teams.items()):
+        for svc in svcs:
+            for i in range(rng.randint(10, 40)):  # about one deploy every 2-9 days
+                version = "v2.0.0"
+                while version in ("v2.0.0", "v3.1.0"):
+                    version = f"v{rng.randint(1, 6)}.{rng.randint(0, 12)}.{rng.randint(0, 30)}"
+                deploys.append({"id": f"sdep-{svc}-{i}", "service": svc, "version": version,
+                                "ts": now_ms - rng.randint(*span),
+                                "status": rng.choice(["success"] * 9 + ["rolled_back"]),
+                                "by": rng.choice(people[team])})
+            for i in range(rng.randint(2, 15)):
+                alerts.append({"id": f"salt-{svc}-{i}", "service": svc,
+                               "severity": rng.choice(["low", "low", "medium", "high"]),
+                               "message": rng.choice(["p95 latency above baseline", "pod restarted",
+                                                      "error rate blip", "disk usage 70%",
+                                                      "queue depth high", "cache hit ratio low",
+                                                      "certificate expires in 14 days"]),
+                               "ts": now_ms - rng.randint(*span), "resolved": True})
+    return deploys, alerts
+
+
+def seed(g, now_ms=None, scale=None):
     """Delete graph `g` and rebuild it from scratch.
 
     Each node type is created in one UNWIND query (one round trip per type),
@@ -195,6 +351,8 @@ def seed(g, now_ms=None):
     Args:
         g: FalkorDB Graph handle (any name; tests use throwaway graphs).
         now_ms: Time the story is anchored to, in epoch ms. Defaults to now.
+        scale: Total number of services for scale mode (see scale_topology());
+            None or 22 or less builds the demo graph only.
 
     Returns:
         The `now_ms` used, so callers (tests, re-seed logic) can compute
@@ -205,6 +363,17 @@ def seed(g, now_ms=None):
     """
     now_ms = now_ms or int(time.time() * 1000)
     deploys, alerts = build_rows(now_ms)
+    services, edges = list(SERVICES), list(DEPENDS_ON)
+    teams, people = dict(TEAMS), dict(PEOPLE)
+    if scale and scale > len(SERVICES):
+        more_services, more_edges, more_teams, more_people = scale_topology(scale)
+        services += more_services
+        edges += more_edges
+        teams.update(more_teams)
+        people.update(more_people)
+        old_deploys, old_alerts = scale_history(now_ms, teams, people)
+        deploys = old_deploys + deploys
+        alerts = old_alerts + alerts
     try:
         g.delete()
     except ResponseError:
@@ -217,23 +386,23 @@ def seed(g, now_ms=None):
 
     # Services, then the dependency edges between them.
     g.query("UNWIND $rows AS r CREATE (:Service {name: r[0], tier: r[1], criticality: r[2]})",
-            {"rows": [list(s) for s in SERVICES]})
+            {"rows": [list(s) for s in services]})
     g.query("""UNWIND $rows AS r
                MATCH (a:Service {name: r[0]}), (b:Service {name: r[1]})
                CREATE (a)-[:DEPENDS_ON {weight: r[2]}]->(b)""",
-            {"rows": [list(e) for e in DEPENDS_ON]})
+            {"rows": [list(e) for e in edges]})
     # Teams and the services they own.
     g.query("""UNWIND $rows AS r
                CREATE (t:Team {name: r.team})
                WITH t, r UNWIND r.services AS s
                MATCH (svc:Service {name: s}) CREATE (t)-[:OWNS]->(svc)""",
-            {"rows": [{"team": t, "services": s} for t, s in TEAMS.items()]})
+            {"rows": [{"team": t, "services": s} for t, s in teams.items()]})
     # People; the first person listed in each team is on call.
     g.query("""UNWIND $rows AS r
                MATCH (t:Team {name: r.team})
                CREATE (:Person {name: r.name, on_call: r.on_call})-[:MEMBER_OF]->(t)""",
             {"rows": [{"team": t, "name": p, "on_call": i == 0}
-                      for t, ps in PEOPLE.items() for i, p in enumerate(ps)]})
+                      for t, ps in people.items() for i, p in enumerate(ps)]})
     # Deploys: who deployed which version of which service, and when.
     g.query("""UNWIND $rows AS r
                MATCH (s:Service {name: r.service}), (p:Person {name: r.by})
@@ -272,21 +441,41 @@ def ensure_fresh(g, max_age_min=MAX_STORY_AGE_MIN):
         True if the graph was re-seeded, False if it was fresh enough.
     """
     try:
-        newest = g.ro_query("MATCH (d:Deploy) RETURN max(d.ts)").result_set[0][0]
-    except ResponseError:
-        newest = None  # graph does not exist yet
+        newest, n_services = g.ro_query(
+            "MATCH (d:Deploy) WITH max(d.ts) AS newest "
+            "MATCH (s:Service) RETURN newest, count(s)").result_set[0]
+    except (ResponseError, IndexError):
+        newest, n_services = None, 0  # graph does not exist yet
     now_ms = int(time.time() * 1000)
     if newest is not None and now_ms - (newest + STORY_DEPLOY_AGO) <= max_age_min * MIN:
         return False
+    # A scale-mode graph is re-seeded at the same size, not shrunk to the demo.
+    scale = n_services if n_services > len(SERVICES) else None
     logging.getLogger("detective.seed").info(
-        "re-seeding the demo graph (%s)", "empty" if newest is None else "story too old")
-    seed(g, now_ms)
+        "re-seeding the demo graph (%s%s)", "empty" if newest is None else "story too old",
+        f", {scale} services" if scale else "")
+    seed(g, now_ms, scale)
     return True
 
 
 if __name__ == "__main__":
-    # Seed the graph named by GRAPH_NAME and print node counts per label.
-    g = get_graph()
-    seed(g)
+    # Seed the demo graph, or with --scale N a graph of N services (default
+    # 300) in its own graph, "incidents_scale" unless GRAPH_NAME is set, so the
+    # demo graph is never overwritten by accident.
+    import argparse
+    import os
+
+    parser = argparse.ArgumentParser(description="Build the Incident Detective graph.")
+    parser.add_argument("--scale", nargs="?", type=int, const=300, default=None,
+                        help="total services for scale mode (default 300)")
+    args = parser.parse_args()
+    name = os.environ.get("GRAPH_NAME") or ("incidents_scale" if args.scale else "incidents")
+    g = get_graph(name)
+    started = time.time()
+    seed(g, scale=args.scale)
     counts = g.ro_query("MATCH (n) RETURN labels(n)[0] AS label, count(n) ORDER BY label").result_set
-    print(f"Seeded graph '{g.name}':", ", ".join(f"{c} {l}" for l, c in counts))
+    edges = g.ro_query("MATCH ()-[r:DEPENDS_ON]->() RETURN count(r)").result_set[0][0]
+    print(f"Seeded graph '{g.name}' in {time.time() - started:.1f}s:",
+          ", ".join(f"{c} {l}" for l, c in counts) + f", {edges} DEPENDS_ON edges")
+    if args.scale:
+        print(f"Run the app on it: GRAPH_NAME={g.name} uvicorn app:app --port 8765")

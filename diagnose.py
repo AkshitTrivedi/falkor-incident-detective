@@ -659,19 +659,35 @@ def _critical(g, steps):
     return {"answer": "\n".join(lines), "decided": True, "steps": steps, "path": None}
 
 
+# "Did you mean X?" only for a close spelling: "chekoutservice" scores 0.97
+# against checkoutservice, "billing-service" 0.80 against pricing-service.
+TYPO_CUTOFF = 0.85
+# List every service only while the graph is small enough to read the list.
+MAX_LISTED = 30
+
+
 def _unknown_service(g, steps, missing=()):
     """Build rule_answer()'s result when the only service named is not in the graph.
 
     rule_answer() puts "There is no service called billing-service in the
     graph." in front; this adds the services that do exist, so the user can
     ask again with the right name, and a "Did you mean" for a near miss
-    ("chekoutservice"). Only a close spelling counts (difflib ratio 0.8), so
-    billing-service is never offered paymentservice.
+    ("chekoutservice"). Only a close spelling counts (difflib ratio TYPO_CUTOFF),
+    so billing-service is never offered paymentservice, or pricing-service on a
+    scale graph (ratio 0.80). On a big graph (seed.py --scale) only the nearest
+    names are listed, not all of them.
     """
     names = [r[0] for r in tools._run(g, "MATCH (s:Service) RETURN s.name ORDER BY s.name")]
-    close = sorted({m for n in missing for m in difflib.get_close_matches(n, names, n=1, cutoff=0.8)})
+    close = sorted({m for n in missing
+                    for m in difflib.get_close_matches(n, names, n=1, cutoff=TYPO_CUTOFF)})
+    if len(names) <= MAX_LISTED:
+        listing = "Services in the graph: " + ", ".join(names) + "."
+    else:
+        near = sorted({m for n in missing for m in difflib.get_close_matches(n, names, n=6, cutoff=0.5)})
+        listing = (f"The graph has {len(names)} services"
+                   + (f"; the nearest names are {', '.join(near)}." if near else "."))
     answer = (_HEADER + (f"Did you mean {' or '.join(close)}? " if close else "")
-              + "Nothing to diagnose for it. Services in the graph: " + ", ".join(names) + ".")
+              + "Nothing to diagnose for it. " + listing)
     return {"answer": answer, "decided": True, "steps": steps, "path": None}
 
 

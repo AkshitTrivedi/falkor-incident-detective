@@ -10,3 +10,4 @@ design-mock/
 .playwright/
 .playwright-cli/
 .claude/
+.playwright-mcp/

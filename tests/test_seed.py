@@ -98,3 +98,58 @@ def test_ensure_fresh_reseeds_only_when_stale():
         assert ensure_fresh(graph)  # 45 min old -> re-seeded
     finally:
         graph.delete()
+
+
+@pytest.fixture(scope="module")
+def big():
+    """Seed a 300-service scale graph once (seed.py --scale), then delete it."""
+    graph = get_graph("incidents_scale_test")
+    seed(graph, scale=300)
+    yield graph
+    graph.delete()
+
+
+def test_scale_graph_size(big):
+    """--scale 300 gives 300 services, about 1,500 edges and months of history."""
+    assert rows(big, "MATCH (s:Service) RETURN count(s)")[0][0] == 300
+    assert 1200 <= rows(big, "MATCH ()-[r:DEPENDS_ON]->() RETURN count(r)")[0][0] <= 1800
+    assert rows(big, "MATCH (d:Deploy) RETURN count(d)")[0][0] > 5000
+
+
+def test_scale_graph_keeps_every_demo_dependency(g, big):
+    """Synthetic services only call demo services, so each demo service depends
+    on exactly what it does in the demo graph and Stories A-C are unchanged."""
+    from seed import SERVICES
+    for name, _, _ in SERVICES:
+        q = (f"MATCH (:Service {{name: '{name}'}})-[:DEPENDS_ON*1..{MAX_HOPS}]->(x) "
+             "RETURN DISTINCT x.name ORDER BY x.name")
+        assert rows(big, q) == rows(g, q), name
+
+
+def test_scale_graph_keeps_the_story_and_the_traps(big):
+    """The last hour holds only Story A, and no trap name exists."""
+    now = rows(big, "MATCH (d:Deploy) RETURN max(d.ts)")[0][0]
+    assert rows(big, f"MATCH (d:Deploy)-[:TO]->(s) WHERE d.ts >= {now - HOUR} "
+                     "RETURN s.name, d.version") == [["fraud-check", "v3.1.0"]]
+    assert rows(big, "MATCH (a:Alert) WHERE NOT a.resolved RETURN count(a)")[0][0] == 4
+    assert rows(big, "MATCH (c)-[:DEPENDS_ON]->(:Service {name: 'api-gateway'}) RETURN count(c)")[0][0] == 0
+    assert rows(big, "MATCH (s:Service) WHERE s.name CONTAINS 'billing' OR s.name CONTAINS 'ledger' "
+                     "RETURN count(s)")[0][0] == 0
+    assert rows(big, "MATCH (d:Deploy) WHERE d.version IN ['v2.0.0', 'v3.1.0'] RETURN count(d)")[0][0] == 1
+    first = [r[0] for r in rows(big, "MATCH (p:Person) RETURN split(p.name, ' ')[0]")]
+    assert first.count("Priya") == first.count("Omar") == first.count("Daniel") == 1
+    assert "Sarah" not in first
+
+
+def test_scale_graph_has_no_cycles_and_fits_max_hops(big):
+    """Layers only call downwards, and no chain is longer than tools.MAX_HOPS."""
+    assert rows(big, "MATCH (s:Service)-[:DEPENDS_ON*1..12]->(s) RETURN count(s)")[0][0] == 0
+    assert rows(big, f"MATCH p = (:Service)-[:DEPENDS_ON*{MAX_HOPS + 1}]->(:Service) "
+                     "RETURN count(p)")[0][0] == 0
+
+
+def test_ensure_fresh_reseeds_a_scale_graph_at_the_same_size(big):
+    """An old scale graph is re-seeded with 300 services, not the 22-service demo."""
+    seed(big, int(time.time() * 1000) - 2 * HOUR, scale=300)
+    assert ensure_fresh(big)
+    assert rows(big, "MATCH (s:Service) RETURN count(s)")[0][0] == 300

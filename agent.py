@@ -662,7 +662,8 @@ def _missing_notes(question, answer, vocab):
     for kind, name in verify.unknown_names(question, vocab):
         phrases = verify.NO_DEPLOY if kind == "version" else verify.NOT_FOUND
         if not verify._called_out(plain, name, phrases):
-            close = (difflib.get_close_matches(name, sorted(vocab["services"]), n=1, cutoff=0.8)
+            close = (difflib.get_close_matches(name, sorted(vocab["services"]), n=1,
+                                              cutoff=diagnose.TYPO_CUTOFF)
                      if kind == "service" else [])
             notes += (f"There is no {diagnose._KIND[kind].format(diagnose._as_written(question, name))}"
                       " in the graph." + (f" Did you mean {close[0]}?" if close else "") + "\n")
