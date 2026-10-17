@@ -266,10 +266,12 @@
   .tb:hover { color: var(--text); border-color: var(--border-2); }
   .gtools .right { margin-left: auto; }
   .player { left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 4px;
-            font-size: 12px; color: var(--muted); width: max-content; max-width: calc(100% - 260px); }
+            font-size: 12px; color: var(--muted); width: min(680px, calc(100% - 260px)); }
   .player[hidden] { display: none; }
-  .player .pos { min-width: 54px; text-align: center; color: var(--text); font-weight: 500; }
-  .player .cap { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px 0 10px;
+  .player .pos { width: 58px; flex: none; text-align: center; color: var(--text); font-weight: 500; }
+  .player .ghost { flex: none; }
+  .player #replay { width: 68px; justify-content: center; }
+  .player .cap { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px 0 10px;
                  margin-left: 4px; border-left: 1px solid var(--border); }
   .player .cap:empty { display: none; }
   .player code { font: 12px var(--mono); color: var(--text); }
@@ -319,7 +321,7 @@
     .by-falkor { display: none; }
     .search { width: 160px; }
     .inspector { width: auto; left: 12px; top: auto; bottom: 12px; max-height: 55%; }
-    .player { max-width: calc(100% - 24px); bottom: 56px; }
+    .player { width: calc(100% - 24px); bottom: 56px; }
   }
 </style>
 </head>
@@ -395,9 +397,9 @@
       <span class="sw">A → B means A calls B</span>
     </div>
     <div class="overlay glass zoom">
-      <button id="zoomIn" type="button" aria-label="Zoom in"><span data-icon="plus"></span></button>
-      <button id="zoomOut" type="button" aria-label="Zoom out"><span data-icon="minus"></span></button>
-      <button id="fit" type="button" aria-label="Fit graph"><span data-icon="fit"></span></button>
+      <button id="zoomIn" type="button" aria-label="Zoom in" title="Zoom in"><span data-icon="plus"></span></button>
+      <button id="zoomOut" type="button" aria-label="Zoom out" title="Zoom out"><span data-icon="minus"></span></button>
+      <button id="fit" type="button" aria-label="Fit graph" title="Fit the whole graph"><span data-icon="fit"></span></button>
     </div>
   </section>
 </main>
@@ -448,7 +450,7 @@ const ICONS = {
   layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   minus: '<path d="M5 12h14"/>',
-  fit: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  fit: '<path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 };
 /** SVG markup for icon `name`; `cls` "sm" gives the 14px size. */
@@ -1024,7 +1026,7 @@ function answerText(out) {
 /** First sentence-ish line of the answer, without Markdown or section labels (for the verdict headline). */
 function firstLine(out) {
   const line = answerText(out).split('\n').map(l => l.replace(/[*`#]/g, '').replace(/^[-•]\s+/, '')
-    .replace(/^(Root cause|Evidence|Unrelated|Page)\s*:\s*/i, '').trim()).find(Boolean) || 'No answer.';
+    .replace(/^(Root cause|Evidence|Unrelated|Page)\b\s*:?\s*/i, '').trim()).find(l => l && !/^N\/?A\b/i.test(l)) || 'No answer.';
   return line.length > 220 ? line.slice(0, 217) + '…' : line;
 }
 
