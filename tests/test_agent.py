@@ -299,13 +299,21 @@ def test_chain_skips_models_without_key(monkeypatch):
     assert agent.model_chain() == [m for m in agent.FALLBACK_CHAIN if m[0] == "gemini"]
 
 
-def test_no_api_key_at_all_is_a_clear_error(g, monkeypatch):
-    """With no API key set, investigate() says so instead of failing obscurely."""
+def test_no_api_key_at_all_still_answers_by_rules(g, monkeypatch):
+    """With no API key set, the rules diagnosis answers instead of an error."""
     for key_var in KEY_VARS:
         monkeypatch.delenv(key_var, raising=False)
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
-    with pytest.raises(RuntimeError, match="no LLM API key"):
-        agent.investigate("What broke?", g=g)
+    out = agent.investigate("checkoutservice is throwing 5xx errors, what broke?", g=g)
+    assert out["provider"] == "rules" and "fraud-check" in out["answer"]
+
+
+def test_pinned_provider_without_its_key_is_a_clear_error(g, monkeypatch):
+    """A pinned model with no key still raises, so the bake-off records it."""
+    for key_var in KEY_VARS:
+        monkeypatch.delenv(key_var, raising=False)
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY is not set"):
+        agent.investigate("What broke?", g=g, provider="gemini")
 
 
 # StepFun's real messages for "If we roll back fraud-check, which alerts should

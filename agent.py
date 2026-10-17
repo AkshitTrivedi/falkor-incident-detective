@@ -309,7 +309,8 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
          "seconds": float}          total time, including failed attempts
 
     Raises:
-        RuntimeError: no API key is set for any model in the chain.
+        RuntimeError: one model was asked for (provider/model) and its API key
+            is not set. With no key at all and no pinned model, the rules answer.
         openai.APIError: only when one model was asked for (provider/model, as
             the bake-off does) and it failed; the bake-off records the error.
     """
@@ -318,9 +319,11 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
         seed.ensure_fresh(g)
     pinned = bool(provider or os.environ.get("LLM_PROVIDER"))
     chain = model_chain(provider, model)
-    if not chain:
-        raise RuntimeError("no LLM API key is set; add one of the keys in PROVIDERS to .env")
     started = time.time()
+    if not chain:
+        # Only an unpinned chain can be empty. Nobody set a key: the rules diagnosis still answers from the graph.
+        log.warning("no LLM API key is set; answering with the rules")
+        return _rules_result(g, question, [], started)
     deadline = started + QUESTION_DEADLINE_S
     fallbacks = []
     log.info("question: %r", question)
