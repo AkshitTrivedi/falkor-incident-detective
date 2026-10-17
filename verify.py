@@ -25,7 +25,24 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
      right after "on-call", "by", "page" or "contact" anywhere, must be a
      Person in the graph. Team-name words and labels ("Page", "Team") are
      trimmed first; checked against every saved model answer, the only hit
-     was the real fabrication.
+     was the real fabrication. A single first name after "on-call:" or "page",
+     and a name followed by "deployed", "owns" and the like, count too.
+  7. No invented versions. Any "v1.2.3" must be a version a tool returned, and
+     in the Root cause a returned version must sit next to its own service
+     ("paymentservice v3.1.0" is flagged when v3.1.0 was a fraud-check deploy).
+  8. No invented services in a chain. In "a → b → c", if two or more names are
+     real services, every name must be; "paymentservice → ledger → fraud-check"
+     is flagged, while prose such as "bad deploy → slow queries" is not.
+  9. Teams. In the Page section, the word before "team" must be a real team,
+     and if who_to_page ran, a real team must be the one it returned.
+ 10. Numbers. A percentage or a duration (ms, s) must appear in a tool result
+     ("CPU 99%" is flagged when the alert said 98%). 0 and 100 are allowed.
+ 11. Unknown services from the question (trap L, "What depends on
+     billing-service?"). If the question names a service-like word that is not
+     in the graph, the answer must say so ("not in the graph", "doesn't exist").
+
+The adversarial set in tests/test_verify_adversarial.py has one made-up
+answer per kind of lie and one correct answer per style; all must hold.
 
 agent.py uses the problems to ask the model for one corrected answer. If that
 one fails too, it shows plain_answer() instead: the tool rows, with no model text.
@@ -40,22 +57,64 @@ import tools
 _LABEL = r"(?:^|\n)[*_#\s-]*(?:{})[^:\n]{{0,20}}:"
 _SECTION_NAMES = "root cause|evidence|unrelated|page"
 
-# Looks like a service name: ends in "service", "-service", "-db" or "-api".
-# Ordinary hyphenated words ("on-call") and real names without those endings
-# ("fraud-check") don't match, so only rule 1's people/versions cover those.
-_SERVICE_LIKE = re.compile(r"(?<![\w-])([a-z][a-z0-9]*(?:-[a-z0-9]+)*?(?:-?service|-db|-api))(?![\w-])")
+# Looks like a service name: ends in "service" or a hyphenated infrastructure
+# word ("-db", "-api", "-gateway", "-cache"...). Ordinary hyphenated words
+# ("on-call") don't match; rule 8 catches made-up names inside a chain.
+_SERVICE_LIKE = re.compile(r"(?<![\w-])([a-z][a-z0-9]*(?:-[a-z0-9]+)*?"
+                           r"(?:-?service|-svc|-db|-api|-gateway|-cache|-store|-queue|"
+                           r"-worker|-proxy|-cluster|-check|-model))(?![\w-])")
 # Words that match _SERVICE_LIKE but are not service names. The hyphenated ones
 # came up in real answers ("cross-service calls", Qwen, Story B).
 _NOT_SERVICES = {"microservice", "micro-service", "cross-service", "inter-service",
-                 "multi-service", "per-service", "service-to-service", "web-service"}
+                 "multi-service", "per-service", "service-to-service", "web-service",
+                 "health-check", "sanity-check", "double-check", "cross-check", "spot-check",
+                 "pre-check", "re-check", "data-model", "threat-model", "mental-model",
+                 "graph-model", "key-value-store"}
+
+# Rule 7: a deploy version such as "v3.1.0" (a leading "v" and at least one dot).
+_VERSION = re.compile(r"(?<![\w.])v\d+(?:\.\d+){1,3}(?![\w.]*\w)")
+# Rule 8: names joined by arrows, "a → b → c" or "a -> b". Backticks and bold are
+# stripped before matching.
+_CHAIN = re.compile(r"[\w.-]+(?:\s*(?:→|->|⟶|=>)\s*[\w.-]+)+")
+_ARROW = re.compile(r"\s*(?:→|->|⟶|=>)\s*")
+# Rule 9: the word(s) before "team" in the Page section ("Payments team",
+# "payments-team", "Platform/Data team"). Not after a hyphen: in "fraud-check
+# team" the team is named by its service, which is fine.
+_TEAM_WORD = re.compile(r"(?<![\w-])([a-z][a-z/&]*)[\s-]+team\b")
+# Words that may stand before "team" without naming one.
+_TEAM_FILLER = {"the", "owning", "owner", "owners", "responsible", "its", "their", "that",
+                "this", "which", "same", "a", "an", "on-call", "call", "service", "whole",
+                "entire", "right", "correct", "your", "that's", "of", "s"}
+# Rule 10: a percentage or a duration in ms or seconds.
+_MEASURE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s?(%|ms\b|s\b|sec\b|secs\b|seconds\b)")
+# Rule 11: ways of saying a service is not in the graph (same list as bakeoff.py).
+NOT_FOUND = ("not found", "unknown", "doesn't exist", "does not exist", "no service",
+             "not a known", "isn't a known", "not in the", "no such", "not exist",
+             "couldn't find", "could not find", "not recognised", "not recognized",
+             "isn't in the", "is not in the", "don't know about", "do not know about",
+             "can't find", "cannot find", "no record of", "don't have a service",
+             "do not have a service", "isn't part of", "is not part of", "no node",
+             "there is no", "there's no")
 
 # Rule 6. A person-like name: two to four Title-case words ("Priya Nair").
-_NAME = r"([A-Z][a-z]+(?:[ \u00a0]+[A-Z][a-z]+){1,3})(?![\w-])"
+_NAME_WORDS = r"[A-Z][a-z]+(?:[ \u00a0]+[A-Z][a-z]+){1,3}"
+_NAME = r"(" + _NAME_WORDS + r")(?![\w-])"
 _PERSON = re.compile(r"(?<![\w-])" + _NAME)
 # The same, right after words that introduce a person, anywhere in the answer.
 # "by" is lower-case only, so a heading like "By Betweenness" does not count.
 _PERSON_AFTER = re.compile(r"(?:\b[Oo]n[- ]call\b[^A-Za-z\n]{0,4}|\bby\s+|\b[Pp]ag(?:e|ing)\s+|"
                            r"\b[Cc]ontact\s+|\b[Nn]otify\s+)" + _NAME)
+# A name doing something only a person does: "Sarah Jenkins deployed it".
+_PERSON_DOING = re.compile(r"(?<![\w-])(" + _NAME_WORDS + r")"
+                           + r"\s+(?:deployed|pushed|shipped|released|rolled|merged|owns|"
+                           r"is on[- ]call|is the on[- ]call)\b")
+# A single first name where a person is expected: "on-call: Sarah", "page Sarah".
+_FIRST_NAME_AFTER = re.compile(r"(?:\b[Oo]n[- ]call\b[^A-Za-z\n]{0,4}|\b[Pp]age\s+|\b[Pp]ing\s+|"
+                               r"\b[Cc]ontact\s+|\b[Nn]otify\s+|\b[Ww]ake(?:\s+up)?\s+)"
+                               r"([A-Z][a-z]+)\b(?![  ]+[A-Z])")
+# Title-case words after "page", "ping"... that are not first names.
+_NOT_FIRST_NAMES = {"them", "whoever", "anyone", "someone", "immediately", "now", "first",
+                    "oncall", "duty", "slack", "pagerduty", "if", "and", "or", "for", "via"}
 # Words trimmed from the ends of a candidate, on top of the team-name words.
 _NOT_NAME_WORDS = {"team", "page", "on", "call", "root", "cause", "the", "a", "an", "no", "none",
                    "nobody", "owner", "owners", "lead", "engineer", "contact", "notify", "escalate"}
@@ -109,7 +168,12 @@ def _invented_people(answer, vocab):
         first = next((line for line in _section(answer, sec, re.I).splitlines() if line.strip()), "")
         found.update(_PERSON.findall(first))
     found.update(_PERSON_AFTER.findall(answer))
+    found.update(_PERSON_DOING.findall(answer))
+    known_words = {w for p in vocab["people"] for w in p.split()}
     invented = set()
+    for name in _FIRST_NAME_AFTER.findall(answer):
+        if name.lower() not in stop | known_words | _NOT_FIRST_NAMES:
+            invented.add(name)
     for name in found:
         words = name.split()
         while words and words[0].lower() in stop:
@@ -142,20 +206,25 @@ def _returned(steps):
         {"text": all results as one lower-case string,
          "deployers": set, "versions": set, "on_call": set,
          "chains": [(service, {services it depends on}), ...],
-         "alerting": services with an open alert}, all lower-case.
+         "alerting": services with an open alert,
+         "deploys": {version: service}, "teams": teams who_to_page returned,
+         "numbers": every number in the results, as floats}, all lower-case.
     """
     facts = {"text": "", "deployers": set(), "versions": set(), "on_call": set(),
-             "chains": [], "alerting": set()}
+             "chains": [], "alerting": set(), "deploys": {}, "teams": set(), "numbers": set()}
     for step in steps:
         result = {k: v for k, v in step["result"].items() if k not in tools.TRACE_KEYS}
         facts["text"] += json.dumps(result).lower() + "\n"
         for d in result.get("deploys", []):
             facts["deployers"].add(str(d.get("by", "")).lower())
             facts["versions"].add(str(d.get("version", "")).lower())
+            facts["deploys"][str(d.get("version", "")).lower()] = str(d.get("service", "")).lower()
         for al in result.get("alerts", []):
             facts["alerting"].add(str(al.get("service", "")).lower())
         if result.get("on_call"):
             facts["on_call"].add(result["on_call"].lower())
+        if result.get("team"):
+            facts["teams"].add(result["team"].lower())
         # (service, the services it depends on), for rule 5.
         if "depends_on" in result:
             facts["chains"].append((result["service"].lower(),
@@ -163,6 +232,8 @@ def _returned(steps):
         if result.get("path"):
             path = [p.lower() for p in result["path"]]
             facts["chains"].append((path[0], set(path[1:])))
+    # Numbers as written, not inside words: "p99" is not the number 99.
+    facts["numbers"] = {float(n) for n in re.findall(r"(?<![\w.])\d+(?:\.\d+)?", facts["text"])}
     return facts
 
 
@@ -224,6 +295,57 @@ def check_answer(answer, steps, question, vocab):
     for name in _invented_people(original, vocab):
         problems.append(f"'{name}' is named as a person, but there is no such person in the "
                         "graph; name only people a tool returned")
+
+    # Rule 7: no invented versions, and a root-cause version sits next to its own service.
+    for version in sorted(set(_VERSION.findall(a)) - vocab["versions"] - facts["versions"]):
+        if version not in q:
+            problems.append(f"version '{version}' is not a deploy in the graph")
+    for version in sorted(_mentions(cause, facts["deploys"])):
+        owner = facts["deploys"][version]
+        named = _mentions(cause, vocab["services"])
+        if named and owner not in named:
+            problems.append(f"root cause puts {version} on {sorted(named)}, but {version} "
+                            f"was a {owner} deploy")
+
+    # Rule 8: no made-up services inside a chain of real ones.
+    plain = re.sub(r"[`*]", "", a)
+    for chain in _CHAIN.findall(plain):
+        names = [n.strip(".-") for n in _ARROW.split(chain)]
+        real = [n for n in names if n in vocab["services"]]
+        if len(real) >= 2:
+            for n in names:
+                # Service-like names were already reported by rule 2. A short form
+                # of a real name ("checkout → payment → fraud-check") is fine.
+                if (n and n not in vocab["services"] and n not in q
+                        and not _SERVICE_LIKE.fullmatch(n)
+                        and not any(s.startswith(n) for s in vocab["services"])):
+                    problems.append(f"'{n}' in the path {chain.strip()} is not a service "
+                                    "in the graph")
+
+    # Rule 9: teams in the Page section must be real, and the one who_to_page returned.
+    team_words = {w for t in vocab.get("teams", ()) for w in re.split(r"[\s/&]+", t) if w}
+    page = _section(a, "page")
+    for word in _TEAM_WORD.findall(page):
+        parts = [w for w in re.split(r"[/&]+", word) if w]
+        if word in _TEAM_FILLER or not team_words:
+            continue
+        if not all(w in team_words for w in parts):
+            problems.append(f"page names a '{word}' team, but there is no such team in the graph")
+        elif facts["teams"] and not any(
+                all(w in re.split(r"[\s/&]+", t) for w in parts) for t in facts["teams"]):
+            problems.append(f"page names the {word} team, but who_to_page returned "
+                            f"{sorted(facts['teams'])}")
+
+    # Rule 10: percentages and durations must come from a tool result.
+    for value, unit in _MEASURE.findall(plain):
+        number = float(value)
+        if number not in facts["numbers"] and number not in (0, 100) and value not in q:
+            problems.append(f"'{value}{unit}' does not appear in any tool result")
+
+    # Rule 11: a service from the question that is not in the graph must be called unknown.
+    for word in sorted(set(_SERVICE_LIKE.findall(q)) - vocab["services"] - _NOT_SERVICES):
+        if word in a and not any(p in plain for p in NOT_FOUND):
+            problems.append(f"'{word}' is not in the graph, but the answer does not say so")
     return problems
 
 

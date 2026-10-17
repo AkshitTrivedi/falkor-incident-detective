@@ -30,6 +30,7 @@ from openai import APIError
 from agent import PROVIDERS, investigate
 from db import get_graph
 from seed import seed
+import verify
 
 # Default pause between questions, so free tiers measured per minute (Groq:
 # 8k tokens per model, Mistral: about 1 request a second) are less likely to
@@ -233,13 +234,9 @@ def check_k(out, a):
     ])
 
 
-# Phrases an answer uses when it says the graph does not have something.
-_NOT_FOUND = ("not found", "unknown", "doesn't exist", "does not exist", "no service",
-              "not a known", "isn't a known", "not in the", "no such", "not exist",
-              "couldn't find", "could not find", "not recognised", "not recognized",
-              "isn't in the", "is not in the", "don't know about", "do not know about",
-              "can't find", "cannot find", "no record of", "no billing-service",
-              "don't have a service", "do not have a service")
+# Phrases an answer uses when it says the graph does not have something;
+# the same list the answer checker uses for rule 11.
+_NOT_FOUND = verify.NOT_FOUND
 _NO_DATA = ("don't have", "do not have", "not available", "isn't available", "cannot",
             "can't", "no data", "not tracked", "doesn't include", "does not include",
             "no metric", "not stored", "unable", "doesn't contain", "does not contain",
