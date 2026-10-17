@@ -140,5 +140,32 @@ def test_unknown_service_in_question_with_real_answer():
     question = "billing-service is down, who do I page?"
     for honest in ("There is no service called billing-service in the graph.",
                    "I couldn't find `billing-service`; it doesn't exist in the service graph.",
-                   "billing-service is not a known service."):
+                   "billing-service is not a known service.",
+                   "There is no `billing-service`; nothing depends on it.",
+                   "No billing-service exists in the graph."):
         assert verify.check_answer(honest, [], question, VOCAB) == [], honest
+
+
+def test_person_from_question_may_be_repeated():
+    """Live probe, Oct 16: "Did Priya Nair deploy anything?" answered "No, Priya
+    Nair did not; Daniel Okafor deployed fraud-check" was flagged by rule 1
+    because no tool returned Priya Nair. Repeating the question's name is fine."""
+    question = "Did Priya Nair deploy anything in the last hour?"
+    steps = STEPS[:1]
+    answer = "No. Priya Nair did not deploy anything; the only deploy is fraud-check v3.1.0 by Daniel Okafor."
+    assert verify.check_answer(answer, steps, question, VOCAB) == []
+    # Paging her without who_to_page returning her is still flagged (rule 4).
+    assert verify.check_answer(answer + "\nPage: Priya Nair.", steps, question, VOCAB)
+
+
+def test_unknown_version_from_question_must_be_denied():
+    """Live probe, Oct 16: Nemotron answered "Did the paymentservice v2.0.0 deploy
+    cause the latency?" with the fraud-check root cause, never saying that no
+    v2.0.0 deploy exists."""
+    question = "Did the paymentservice v2.0.0 deploy cause the latency?"
+    silent = GOOD  # right root cause, but no word about v2.0.0
+    honest = "There is no paymentservice v2.0.0 deploy in the graph. " + GOOD
+    assert verify.check_answer(silent, STEPS, question, VOCAB)
+    assert verify.check_answer(honest, STEPS, question, VOCAB) == []
+    honest2 = "No — the only recent deploy is fraud-check v3.1.0.\n" + GOOD
+    assert verify.check_answer(honest2, STEPS, question, VOCAB) == []

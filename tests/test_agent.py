@@ -303,3 +303,58 @@ def test_no_api_key_at_all_is_a_clear_error(g, monkeypatch):
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     with pytest.raises(RuntimeError, match="no LLM API key"):
         agent.investigate("What broke?", g=g)
+
+
+# StepFun's real messages for "If we roll back fraud-check, which alerts should
+# clear?" (Oct 16): the answer came with the who_to_page call, the final message
+# was only the Page line.
+STEPFUN_DRAFT = """Rolling back fraud-check (v3.1.0, deployed by Daniel Okafor) should clear these alerts.
+
+**Alerts that should clear:**
+- **payments-db** (critical, "CPU 98%") - fraud-check calls payments-db directly.
+- **paymentservice** (high, "p99 latency 4.2s").
+
+**Unrelated:**
+- **adservice** - no dependency path to fraud-check.
+
+**Page:** fraud-check's owning team and on-call person."""
+STEPFUN_FINAL = "**Page:** Payments team - Priya Nair (on-call for fraud-check)"
+
+
+def test_merge_draft_keeps_the_answer_written_with_a_tool_call():
+    """A Page-only final reply keeps the draft body and replaces its Page line."""
+    merged = agent._merge_draft(STEPFUN_DRAFT, STEPFUN_FINAL)
+    assert "Alerts that should clear" in merged and "adservice" in merged
+    assert merged.endswith(STEPFUN_FINAL)
+    assert "owning team and on-call person" not in merged
+
+
+def test_merge_draft_leaves_full_answers_alone():
+    """A final reply with its own sections, or no draft at all, is used as is."""
+    full = "Root cause: fraud-check v3.1.0\nPage: Payments team, Priya Nair"
+    assert agent._merge_draft(STEPFUN_DRAFT, full) == full
+    assert agent._merge_draft("", STEPFUN_FINAL) == STEPFUN_FINAL
+    assert agent._merge_draft(STEPFUN_DRAFT, None) == STEPFUN_DRAFT.strip()
+    narration = "I'll start by looking at recent changes. " * 6
+    free_form = "The adservice alert is unrelated: there is no dependency path. " * 4
+    assert agent._merge_draft(narration, free_form) == free_form.strip()
+
+
+def test_loop_uses_the_draft(monkeypatch):
+    """End to end through the tool loop with a scripted model."""
+    call = {"id": "c1", "type": "function",
+            "function": {"name": "recent_changes", "arguments": "{}"}}
+    replies = iter([_reply(STEPFUN_DRAFT, [call]), _reply(STEPFUN_FINAL)])
+
+    class Client:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    return next(replies)
+    monkeypatch.setattr(agent, "make_client", lambda *a, **k: (Client, "fake"))
+    monkeypatch.setattr(agent, "_check", lambda q, answer, *a, **k: (
+        answer, {"problems": [], "retried": False, "by_rules": False}, [], None))
+    out = agent._investigate_once("If we roll back fraud-check?", get_graph(), "groq", "fake",
+                                  4, True)
+    assert "Alerts that should clear" in out["answer"]

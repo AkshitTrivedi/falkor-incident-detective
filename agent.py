@@ -30,6 +30,7 @@ Usage:
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -105,7 +106,11 @@ MODEL_BUDGET_S = 30
 # tokens per minute, and this prompt is resent on every step.
 SYSTEM_PROMPT = """You are Incident Detective, an on-call assistant for a microservice platform.
 You investigate incidents ONLY with the provided tools, which query a graph of services,
-dependencies, deploys, alerts, teams and on-call people. Never invent services, people or facts.
+dependencies, deploys, alerts, teams and on-call people. Never invent services, people, teams,
+versions or numbers: every name and figure in your answer must appear in a tool result.
+If the question names a service, person, team or version the graph does not have, say plainly
+that it is not in the graph. If no tool can answer (for example CPU or memory metrics), say so.
+Put your whole answer in your final message, not next to a tool call.
 
 For "what broke?" questions:
 1. Call recent_changes to see recent deploys and open alerts.
@@ -125,8 +130,9 @@ Page: <team and on-call person>"""
 # Sent after an answer fails verify.check_answer(); {problems} is one per line.
 RETRY_PROMPT = """Your answer states things the tool results do not support:
 {problems}
-Rewrite the answer in the same format using only names, versions and people that appear in
-the tool results above. Do not call any more tools."""
+Rewrite the answer in the same format using only services, people, teams, versions and numbers
+that appear in the tool results above. If something the question names is not in the graph,
+say so plainly. Do not call any more tools."""
 
 # OpenAI function-calling schemas for tools.TOOLS. Descriptions tell the LLM
 # when to use each tool; names must match the functions in tools.py.
@@ -381,6 +387,7 @@ def _investigate_once(question, g, provider, model, max_steps, fail_fast, deadli
     steps, path = [], None
     tokens = {"prompt": 0, "completion": 0}
     answer, llm_calls = None, 0
+    draft = ""  # the longest text the model wrote next to a tool call (see _merge_draft)
 
     for _ in range(max_steps):
         t0 = time.time()
@@ -392,8 +399,10 @@ def _investigate_once(question, g, provider, model, max_steps, fail_fast, deadli
 
         # No tool calls means the LLM has written its final answer.
         if not reply.tool_calls:
-            answer = reply.content
+            answer = _merge_draft(draft, reply.content)
             break
+        if reply.content and len(reply.content.strip()) >= DRAFT_MIN_CHARS:
+            draft = reply.content
 
         # Keep the assistant's tool-call message in the history, as the API requires.
         messages.append({"role": "assistant", "content": reply.content or "",
@@ -428,6 +437,44 @@ def _investigate_once(question, g, provider, model, max_steps, fail_fast, deadli
     return {"answer": answer, "steps": steps, "queries": _queries(steps), "path": path,
             "provider": provider, "model": model, "llm_calls": llm_calls, "tokens": tokens,
             "check": check}
+
+
+# Text written next to a tool call shorter than this is narration ("Let me check
+# the dependencies."), not a draft answer.
+DRAFT_MIN_CHARS = 200
+# Section labels other than "Page" (the part a fragment final message tends to keep).
+_BODY_LABEL = verify._LABEL.format("root cause|evidence|unrelated")
+_PAGE_LABEL = verify._LABEL.format("page")
+
+
+def _merge_draft(draft, final):
+    """Join a draft answer written next to a tool call with a fragment final reply.
+
+    StepFun (live probe, Oct 16, "If we roll back fraud-check, which alerts
+    should clear?") wrote its whole answer in the same message as its
+    who_to_page call, then sent only "Page: Payments team, Priya Nair" as the
+    final message, so the UI showed one line. When the final reply has no body
+    sections but the draft does, or the final reply is empty, the draft is kept
+    and the final reply's Page line replaces the draft's.
+
+    Args:
+        draft: The latest text of DRAFT_MIN_CHARS or more sent with tool calls, or "".
+        final: The final reply's text (may be None).
+
+    Returns:
+        str: The answer to check and show.
+    """
+    final = (final or "").strip()
+    if not draft or re.search(_BODY_LABEL, final, re.I):
+        return final
+    if not final:
+        return draft.strip()
+    if not re.search(_BODY_LABEL, draft, re.I) and len(final) >= DRAFT_MIN_CHARS:
+        return final  # a full final answer in free form; the draft was narration
+    page = re.search(_PAGE_LABEL, draft, re.I)
+    if page and re.search(_PAGE_LABEL, final, re.I):
+        draft = draft[:page.start()]
+    return draft.rstrip() + "\n\n" + final
 
 
 def _ask(client, model, messages, tokens, deadline=None):

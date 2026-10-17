@@ -40,6 +40,8 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
  11. Unknown services from the question (trap L, "What depends on
      billing-service?"). If the question names a service-like word that is not
      in the graph, the answer must say so ("not in the graph", "doesn't exist").
+ 12. Unknown versions from the question ("Did the paymentservice v2.0.0 deploy
+     cause it?"): if no such deploy exists, the answer must say so.
 
 The adversarial set in tests/test_verify_adversarial.py has one made-up
 answer per kind of lie and one correct answer per style; all must hold.
@@ -94,7 +96,14 @@ NOT_FOUND = ("not found", "unknown", "doesn't exist", "does not exist", "no serv
              "isn't in the", "is not in the", "don't know about", "do not know about",
              "can't find", "cannot find", "no record of", "don't have a service",
              "do not have a service", "isn't part of", "is not part of", "no node",
-             "there is no", "there's no")
+             "there is no", "there's no", "isn't a service", "is not a service",
+             "not a service", "no service named", "no service called", "not listed",
+             "doesn't appear", "does not appear", "not present")
+# Rule 12: ways of saying a deploy did not happen, on top of NOT_FOUND.
+NO_DEPLOY = NOT_FOUND + ("no deploy", "not deployed", "wasn't deployed", "was not deployed",
+                         "no record", "not a recent", "isn't a recent", "is not a recent",
+                         "only deploy", "only recent deploy", "only change", "never deployed",
+                         "did not happen", "didn't happen", "no such")
 
 # Rule 6. A person-like name: two to four Title-case words ("Priya Nair").
 _NAME_WORDS = r"[A-Z][a-z]+(?:[ \u00a0]+[A-Z][a-z]+){1,3}"
@@ -255,9 +264,10 @@ def check_answer(answer, steps, question, vocab):
     facts = _returned(steps)
     problems = []
 
-    # Rule 1: people and versions must come from a tool result.
+    # Rule 1: people and versions must come from a tool result (or the question:
+    # "Did Priya Nair deploy anything?" may be answered "No, Priya Nair did not").
     for name in sorted(_mentions(a, vocab["people"] | vocab["versions"])):
-        if name not in facts["text"]:
+        if name not in facts["text"] and name not in q:
             problems.append(f"'{name}' is named, but no tool returned it")
 
     # Rule 2: service-like words must be real services (or come from the question).
@@ -344,8 +354,16 @@ def check_answer(answer, steps, question, vocab):
 
     # Rule 11: a service from the question that is not in the graph must be called unknown.
     for word in sorted(set(_SERVICE_LIKE.findall(q)) - vocab["services"] - _NOT_SERVICES):
-        if word in a and not any(p in plain for p in NOT_FOUND):
+        denied = (any(p in plain for p in NOT_FOUND)
+                  or re.search(rf"\bno\s+(?:\w+\s+){{0,3}}?['\"]?{re.escape(word)}", plain))
+        if word in a and not denied:
             problems.append(f"'{word}' is not in the graph, but the answer does not say so")
+
+    # Rule 12: a version from the question that was never deployed must be called so.
+    for version in sorted(set(_VERSION.findall(q)) - vocab["versions"]):
+        if not any(p in plain for p in NO_DEPLOY):
+            problems.append(f"there is no {version} deploy in the graph, but the answer "
+                            "does not say so")
     return problems
 
 
