@@ -19,6 +19,13 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
      failing service depends on (its dependencies() list or the dependency
      path). Only services with an open alert count, so naming the root cause
      for comparison ("unrelated to fraud-check") is fine.
+  6. No invented people. Rule 1 only knows names that exist in the graph, so a
+     made-up "Sarah Jenkins" (Gemini, Oct 16) or "Maya Lin" (round 3, story C)
+     slipped through. A Title-case name on the first line of the Root cause or Page section, or
+     right after "on-call", "by", "page" or "contact" anywhere, must be a
+     Person in the graph. Team-name words and labels ("Page", "Team") are
+     trimmed first; checked against every saved model answer, the only hit
+     was the real fabrication.
 
 agent.py uses the problems to ask the model for one corrected answer. If that
 one fails too, it shows plain_answer() instead: the tool rows, with no model text.
@@ -42,6 +49,17 @@ _SERVICE_LIKE = re.compile(r"(?<![\w-])([a-z][a-z0-9]*(?:-[a-z0-9]+)*?(?:-?servi
 _NOT_SERVICES = {"microservice", "micro-service", "cross-service", "inter-service",
                  "multi-service", "per-service", "service-to-service", "web-service"}
 
+# Rule 6. A person-like name: two to four Title-case words ("Priya Nair").
+_NAME = r"([A-Z][a-z]+(?:[ \u00a0]+[A-Z][a-z]+){1,3})(?![\w-])"
+_PERSON = re.compile(r"(?<![\w-])" + _NAME)
+# The same, right after words that introduce a person, anywhere in the answer.
+# "by" is lower-case only, so a heading like "By Betweenness" does not count.
+_PERSON_AFTER = re.compile(r"(?:\b[Oo]n[- ]call\b[^A-Za-z\n]{0,4}|\bby\s+|\b[Pp]ag(?:e|ing)\s+|"
+                           r"\b[Cc]ontact\s+|\b[Nn]otify\s+)" + _NAME)
+# Words trimmed from the ends of a candidate, on top of the team-name words.
+_NOT_NAME_WORDS = {"team", "page", "on", "call", "root", "cause", "the", "a", "an", "no", "none",
+                   "nobody", "owner", "owners", "lead", "engineer", "contact", "notify", "escalate"}
+
 
 def graph_vocabulary(g):
     """Fetch every service name, person name and deploy version in the graph.
@@ -50,23 +68,57 @@ def graph_vocabulary(g):
         g: FalkorDB Graph handle.
 
     Returns:
-        {"services": set, "people": set, "versions": set}, all lower-case.
+        {"services": set, "people": set, "versions": set, "teams": set}, all lower-case.
     """
     def column(cypher):
         return {row[0].lower() for row in g.ro_query(cypher).result_set if row[0]}
     return {"services": column("MATCH (s:Service) RETURN s.name"),
             "people": column("MATCH (p:Person) RETURN p.name"),
-            "versions": column("MATCH (d:Deploy) RETURN DISTINCT d.version")}
+            "versions": column("MATCH (d:Deploy) RETURN DISTINCT d.version"),
+            "teams": column("MATCH (t:Team) RETURN t.name")}
 
 
-def _section(text, name):
-    """Return the text of section `name` ("root cause", "page"...), or "" if absent."""
-    start = re.search(_LABEL.format(name), text)
+def _section(text, name, flags=0):
+    """Return the text of section `name` ("root cause", "page"...), or "" if absent.
+
+    `flags=re.I` finds the labels in text that has not been lower-cased.
+    """
+    start = re.search(_LABEL.format(name), text, flags)
     if not start:
         return ""
     rest = text[start.end():]
-    end = re.search(_LABEL.format(_SECTION_NAMES), rest)
+    end = re.search(_LABEL.format(_SECTION_NAMES), rest, flags)
     return rest[:end.start()] if end else rest
+
+
+def _invented_people(answer, vocab):
+    """Rule 6: person-like names in `answer` that are not people in the graph.
+
+    Args:
+        answer: The model's answer, original case (names are found by capitals).
+        vocab: graph_vocabulary(); "teams" is optional (older callers).
+
+    Returns:
+        Sorted list of the names, as written.
+    """
+    stop = _NOT_NAME_WORDS | {w for t in vocab.get("teams", ()) for w in re.findall(r"[a-z]+", t)}
+    found = set()
+    for sec in ("root cause", "page"):
+        # Only the section's first line: a heading after the last section
+        # ("Key Takeaways") would otherwise count as part of it.
+        first = next((line for line in _section(answer, sec, re.I).splitlines() if line.strip()), "")
+        found.update(_PERSON.findall(first))
+    found.update(_PERSON_AFTER.findall(answer))
+    invented = set()
+    for name in found:
+        words = name.split()
+        while words and words[0].lower() in stop:
+            words.pop(0)
+        while words and words[-1].lower() in stop:
+            words.pop()
+        if len(words) >= 2 and " ".join(words).lower() not in vocab["people"]:
+            invented.add(" ".join(words))
+    return sorted(invented)
 
 
 def _mentions(text, names):
@@ -126,7 +178,8 @@ def check_answer(answer, steps, question, vocab):
     Returns:
         [str, ...] one plain-English problem per unsupported claim; [] if none.
     """
-    a = answer.lower().replace("’", "'").replace("‑", "-")
+    original = answer.replace("’", "'").replace("‑", "-")
+    a = original.lower()
     q = question.lower()
     facts = _returned(steps)
     problems = []
@@ -166,6 +219,11 @@ def check_answer(answer, steps, question, vocab):
     if wrongly_unrelated:
         problems.append(f"unrelated lists {sorted(wrongly_unrelated)}, but the tools show "
                         "the failing service depends on them")
+
+    # Rule 6: no invented people.
+    for name in _invented_people(original, vocab):
+        problems.append(f"'{name}' is named as a person, but there is no such person in the "
+                        "graph; name only people a tool returned")
     return problems
 
 

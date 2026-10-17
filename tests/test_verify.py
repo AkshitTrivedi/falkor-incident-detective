@@ -139,3 +139,25 @@ def test_plain_answer_lists_tool_rows_only():
 def test_plain_answer_with_no_rows():
     """With nothing returned, it says so instead of printing only the heading."""
     assert "No tool returned any rows." in verify.plain_answer([])
+
+
+def test_invented_on_call_person_is_flagged():
+    """Gemini's real answer (Oct 16) paged a made-up person, with no colon after "Page"."""
+    bad = GOOD.replace("Page: Payments team, on-call Priya Nair.",
+                       "Page payments-team (on-call: Sarah Jenkins)")
+    problems = verify.check_answer(bad, STEPS, QUESTION, VOCAB)
+    assert any("'Sarah Jenkins'" in p for p in problems)
+
+
+def test_invented_person_in_page_section_is_flagged():
+    """Round 3, story C: "Maya Lin" in the Page section; the real person is Maya Chen."""
+    bad = GOOD.replace("on-call Priya Nair", "Maya Lin")
+    problems = verify.check_answer(bad, STEPS, QUESTION, VOCAB)
+    assert any("'Maya Lin'" in p for p in problems)
+
+
+def test_team_names_and_headings_are_not_people():
+    """Team names, "Page" and Title-case headings outside person contexts are not flagged."""
+    vocab = {**VOCAB, "teams": {"payments", "catalog & logistics"}}
+    answer = GOOD + "\n\nKey Observations: Team Payments owns it. Ranked By Betweenness Score."
+    assert verify.check_answer(answer, STEPS, QUESTION, vocab) == []
