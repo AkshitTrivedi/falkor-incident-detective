@@ -2,213 +2,340 @@
 <!--
   Incident Detective UI. One page, no build step; served by app.py at "/".
 
-  Left:  chat. Question, answer (with badges for who answered and whether it
-         passed the check), the tool steps, a timeline, and the Cypher that ran.
+  Left:  the investigation. A verdict card built from the structured summary
+         (root cause, failure path, evidence, who to page), the model that
+         answered, the tool steps with a step-through control, the timeline,
+         and (collapsed) the model's full text and the Cypher that ran.
   Right: the live graph from /api/graph, drawn with Cytoscape.js and a layered
          dagre layout (callers on the left, what they call on the right).
 
-  Graph design choices (from how Kiali, NeuBird, ServiceNow and ilert draw
-  service maps, and the focus+context literature):
-    * Health is shown on the service itself (border colour and glow from its
-      worst open alert), not as extra alert nodes.
-    * Node shape tells the kind: service, datastore (barrel), external API,
-      deploy (tag), team, on-call person.
-    * An answer fades everything off the failure chain instead of hiding it,
-      animates the impact path, and pulses the root-cause deploy.
-    * Clicking a node focuses it and its direct neighbours and opens an inspector.
+  Visual system (see the research notes in DESIGN_NOTES.md):
+    * Neutral slate UI (Radix Colors slate-dark), one indigo accent for actions
+      and selection; red / orange / amber are kept for health and failure only.
+    * Geist and Geist Mono, four text sizes (12/13/15/20); hierarchy by weight
+      and colour, not size. Lucide icons inlined as SVG, no emoji.
+    * Graph: node kind is shown by shape, health by border colour and glow;
+      an answer fades everything off the failure chain instead of hiding it.
 
   Libraries (pinned, from jsDelivr): cytoscape 3.30.2, dagre 0.8.5, cytoscape-dagre 2.5.0.
+  Fonts: Geist and Geist Mono from Google Fonts (OFL).
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Incident Detective</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..600&display=swap">
 <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
 <style>
+  /* Tokens. Neutrals are Radix slate-dark steps (1 page bg ... 12 high-contrast text);
+     colours are Radix indigo / red / orange / amber / green / violet dark steps. */
   :root {
-    --bg: #0b0f14; --canvas: #0d1117; --panel: #151b23; --panel-2: #1b222c; --border: #2a313c; --border-2: #3a4350;
-    --text: #e6edf3; --muted: #8b949e; --faint: #5c6670;
-    --accent: #ff7b54; --service: #58a6ff; --data: #bc8cff; --external: #9aa4b0; --deploy: #f0b429;
-    --team: #2ea7a0; --person: #3fb950;
-    --critical: #ff4d4f; --high: #ff9f43; --medium: #e3c84b; --ok: #3fb950;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --bg: #111113; --panel: #18191b; --panel-2: #212225; --hover: #272a2d;
+    --border: #2e3135; --border-2: #363a3f; --line: #43484e; --faint: #696e77;
+    --muted: #b0b4ba; --text: #edeef0; --canvas: #0e0f11; --grid: #1d1f22;
+    --accent: #3e63dd; --accent-hover: #5472e4; --accent-text: #9eb1ff; --accent-bg: #182449; --accent-line: #304384;
+    --critical: #e5484d; --critical-text: #ff9592; --critical-bg: #3b1219; --critical-line: #72232d;
+    --high: #f76b15; --high-text: #ff801f; --high-bg: #331e0b;
+    --medium: #ffc53d; --medium-text: #ffca16; --medium-bg: #302008;
+    --ok: #30a46c; --ok-text: #3dd68c; --ok-bg: #132d21; --ok-line: #20573e;
+    --data: #6e56cf;
+    --sans: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --r: 8px;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; display: flex; flex-direction: column; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans);
+         display: flex; flex-direction: column; -webkit-font-smoothing: antialiased; }
   button { font: inherit; color: inherit; }
+  svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 2;
+          stroke-linecap: round; stroke-linejoin: round; vertical-align: -3px; }
+  svg.i.sm { width: 14px; height: 14px; vertical-align: -2px; }
+  .num { font-variant-numeric: tabular-nums; }
 
   /* Header */
-  header { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; background: var(--panel); }
-  header h1 { font-size: 15px; margin: 0; letter-spacing: .01em; }
-  header h1 span { color: var(--accent); }
-  .pill { font-size: 11.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; }
-  .status { margin-left: auto; display: flex; gap: 14px; font-size: 12px; color: var(--muted); align-items: center; }
-  .status b { color: var(--text); font-weight: 600; }
-  .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; margin-right: 6px; }
-  .status.ok .dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(63,185,80,.18); }
-  .status.bad .dot { background: var(--critical); }
+  header { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 48px; flex: none;
+           border-bottom: 1px solid var(--border); background: var(--panel); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; white-space: nowrap; }
+  .logo { width: 26px; height: 26px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; color: #fff; }
+  .by-falkor { color: var(--faint); font-size: 12px; font-weight: 400; }
+  .status { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted);
+            overflow-x: auto; scrollbar-width: none; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px;
+          padding: 2px 10px; white-space: nowrap; background: var(--panel-2); }
+  .chip b { color: var(--text); font-weight: 600; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+  .status.ok .live .dot { background: var(--ok); animation: pulse 2s ease-in-out infinite; }
+  .status.bad .live .dot { background: var(--critical); }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(48,164,108,.5); } 50% { box-shadow: 0 0 0 4px rgba(48,164,108,0); } }
 
-  main { flex: 1; display: grid; grid-template-columns: minmax(360px, 440px) 1fr; min-height: 0; }
+  main { flex: 1; display: grid; grid-template-columns: minmax(380px, 440px) 1fr; min-height: 0; }
 
-  /* Chat column */
-  .chat { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
-  .messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-  .intro h2 { font-size: 18px; margin: 4px 0 6px; }
-  .intro p { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
-  .chips { display: flex; flex-direction: column; gap: 8px; }
-  .chips button { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; font-size: 13px; cursor: pointer; text-align: left; display: flex; gap: 10px; align-items: baseline; }
-  .chips button:hover { border-color: var(--accent); background: var(--panel-2); }
-  .chips button small { color: var(--muted); font-size: 11px; margin-left: auto; white-space: nowrap; }
-  .msg-user { align-self: flex-end; background: #1f6feb; padding: 9px 13px; border-radius: 14px 14px 4px 14px; max-width: 88%; }
-  .msg-agent { background: var(--panel); border: 1px solid var(--border); padding: 14px; border-radius: 4px 14px 14px 14px; }
-  .msg-agent.thinking { color: var(--muted); }
-  .msg-agent.error { border-color: var(--critical); }
-  .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; font-size: 11px; }
-  .badge { border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--muted); }
-  .badge.ok { color: var(--ok); border-color: rgba(63,185,80,.45); }
-  .badge.warn { color: var(--medium); border-color: rgba(227,200,75,.45); }
-  .answer p { margin: 0 0 7px; }
-  .answer ul { margin: 0 0 7px; padding-left: 18px; }
-  .answer .label { color: var(--accent); font-weight: 650; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; margin-right: 4px; }
-  .answer code { background: var(--bg); border-radius: 4px; padding: 0 4px; font: 12px var(--mono); }
-  .svc { border-bottom: 1px dotted var(--muted); cursor: pointer; }
-  .svc:hover { color: var(--accent); border-color: var(--accent); }
-  .page { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.35); font-size: 13px; }
-  .note { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
-  .by { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 9px; background: rgba(88,166,255,.06); font-size: 12px; }
-  .by .who { font-weight: 650; color: var(--text); }
-  .by .via { color: var(--muted); }
-  .by .stats { margin-left: auto; color: var(--muted); font: 11px var(--mono); white-space: nowrap; }
-  .by.rules { background: rgba(227,200,75,.07); border-color: rgba(227,200,75,.35); }
-  .trail { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: -2px 0 10px; font-size: 11px; color: var(--muted); }
-  .trail .hop { border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; }
-  .trail .hop.fail { text-decoration: line-through; text-decoration-color: rgba(255,92,92,.6); }
-  .trail .hop.win { color: var(--ok); border-color: rgba(63,185,80,.45); }
-  h4 { margin: 14px 0 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
-  .steps { margin: 0; padding: 0; list-style: none; counter-reset: s; }
-  .steps li { counter-increment: s; padding: 5px 6px 5px 30px; position: relative; color: var(--muted); cursor: pointer; border-radius: 6px; font-size: 12.5px; display: flex; gap: 8px; }
+  /* Left panel */
+  .side { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+  .scroll { flex: 1; overflow-y: auto; padding: 16px; }
+  .section-label { font-size: 12px; color: var(--faint); font-weight: 500; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+
+  /* Empty state */
+  .intro h2 { font-size: 20px; line-height: 1.3; margin: 8px 0 8px; font-weight: 600; letter-spacing: -.01em; }
+  .intro p { color: var(--muted); margin: 0 0 20px; }
+  .examples { display: grid; gap: 8px; }
+  .example { display: flex; gap: 12px; align-items: flex-start; text-align: left; width: 100%; cursor: pointer;
+             background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
+  .example:hover { border-color: var(--accent-line); background: var(--panel-2); }
+  .example .ico { width: 28px; height: 28px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border);
+                  display: grid; place-items: center; color: var(--muted); flex: none; }
+  .example:hover .ico { color: var(--accent-text); }
+  .example b { display: block; font-weight: 500; }
+  .example small { color: var(--faint); font-size: 12px; }
+  .how { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--faint); font-size: 12px; display: grid; gap: 6px; }
+  .how div { display: flex; gap: 8px; }
+
+  /* Investigation header */
+  .qline { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
+  .qline .q { flex: 1; font-size: 15px; font-weight: 600; line-height: 1.35; }
+  .ghost { background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted); cursor: pointer;
+           padding: 3px 6px; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+  .ghost:hover { background: var(--hover); color: var(--text); }
+  .ghost:disabled { opacity: .35; cursor: default; background: none; }
+  .hist { position: relative; }
+  .hist summary { list-style: none; }
+  .hist summary::-webkit-details-marker { display: none; }
+  .menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; width: 300px; background: var(--panel);
+          border: 1px solid var(--border-2); border-radius: var(--r); padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,.5); }
+  .menu button { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 6px; padding: 7px 9px; cursor: pointer; }
+  .menu button:hover { background: var(--hover); }
+  .menu .cur { color: var(--accent-text); }
+
+  /* Verdict card */
+  .verdict { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .verdict .top { padding: 14px 14px 12px; }
+  .kind { font-size: 12px; font-weight: 500; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .kind.cause { color: var(--critical-text); }
+  .headline { font-size: 20px; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; }
+  .headline .ver { font-family: var(--mono); font-weight: 500; color: var(--critical-text); }
+  .headline.text { font-size: 15px; font-weight: 500; }
+  .subline { color: var(--muted); margin-top: 2px; }
+  .vrow { padding: 10px 14px; border-top: 1px solid var(--border); }
+  .vrow .section-label { margin-bottom: 6px; }
+  .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .chain .arrow { color: var(--faint); }
+  .evidence { display: grid; gap: 4px; }
+  .ev { display: flex; gap: 8px; align-items: baseline; }
+  .ev .dot { transform: translateY(-1px); }
+  .ev .msg { flex: 1; color: var(--muted); min-width: 0; }
+  .ev .ago { color: var(--faint); font: 12px var(--mono); white-space: nowrap; }
+  .page { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--ok-line); background: var(--ok-bg); }
+  .page .bell { width: 28px; height: 28px; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; flex: none; }
+  .page b { font-weight: 600; }
+  .page small { display: block; color: var(--muted); font-size: 12px; }
+  .page.none { background: var(--panel-2); border-top-color: var(--border); }
+  .page.none .bell { background: var(--faint); }
+
+  /* Service names: small mono pills, clickable */
+  .svc { font: 12px var(--mono); background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px;
+         padding: 0 5px; cursor: pointer; white-space: nowrap; }
+  .svc:hover { border-color: var(--accent-line); color: var(--accent-text); }
+  .svc.bad { border-color: var(--critical-line); color: var(--critical-text); }
+  .svc.dim { color: var(--faint); border-style: dashed; }
+
+  /* Meta row: model badge and check */
+  .metarow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 18px; font-size: 12px; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 6px;
+         padding: 2px 8px; color: var(--muted); background: var(--panel); white-space: nowrap; }
+  .tag.ok { color: var(--ok-text); border-color: var(--ok-line); }
+  .tag.warn { color: var(--medium-text); border-color: #4a3a12; }
+  .model { position: relative; }
+  .model summary { list-style: none; cursor: pointer; }
+  .model summary::-webkit-details-marker { display: none; }
+  .model summary .tag:hover { border-color: var(--border-2); color: var(--text); }
+  .model .who { color: var(--text); font-weight: 500; }
+  .model .menu { left: 0; right: auto; padding: 10px 12px; font-size: 12px; color: var(--muted); }
+  .model .menu ol { margin: 6px 0 0; padding-left: 18px; }
+  .model .menu li { margin: 2px 0; }
+  .model .menu .win { color: var(--ok-text); }
+  .model .menu .why { color: var(--faint); }
+
+  /* Steps with the step-through control */
+  .block { margin-bottom: 18px; }
+  .scrub { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .scrub .pos { min-width: 64px; text-align: center; color: var(--muted); font-size: 12px; }
+  .steps { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+  .steps li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; border-top: 1px solid var(--border); }
+  .steps li:first-child { border-top: 0; }
   .steps li:hover { background: var(--panel-2); }
-  .steps li::before { content: counter(s); position: absolute; left: 4px; top: 6px; width: 18px; height: 18px; border-radius: 50%; background: var(--border); color: var(--text); font-size: 10.5px; display: grid; place-items: center; }
-  .steps li.active { color: var(--text); background: var(--panel-2); }
-  .steps li.active::before { background: var(--accent); }
-  .steps .tool { font: 12px var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .steps .meta { margin-left: auto; font-size: 11px; white-space: nowrap; }
-  .timeline { margin: 0; padding: 0 0 0 12px; list-style: none; border-left: 2px solid var(--border); }
-  .timeline li { position: relative; padding: 3px 0 3px 10px; font-size: 12.5px; }
-  .timeline li::before { content: ""; position: absolute; left: -18px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px var(--panel); }
-  .timeline li.other { opacity: .4; }
-  .timeline .when { color: var(--muted); font: 11px var(--mono); margin-right: 6px; }
-  details { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
-  summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-  .qhead { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11.5px; color: var(--muted); }
-  .qhead span { flex: 1; }
-  .q { position: relative; }
-  .q pre { padding-right: 64px; }
-  .copy { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
-  .copy:hover { border-color: var(--border-2); }
-  .copy.done { color: var(--ok); border-color: rgba(63,185,80,.45); }
-  .q .copy { position: absolute; top: 6px; right: 6px; }
-  pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font: 11.5px/1.45 var(--mono); overflow-x: auto; color: #a5d6ff; white-space: pre-wrap; margin: 8px 0 0; }
-  .input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); background: var(--panel); }
-  .input input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px 12px; font: inherit; }
-  .input input:focus { outline: none; border-color: var(--accent); }
-  .input button { background: var(--accent); color: #1a0f0a; border: 0; border-radius: 8px; padding: 0 18px; font-weight: 650; cursor: pointer; }
-  .input button:disabled { opacity: .5; cursor: wait; }
-  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; vertical-align: -2px; margin-right: 8px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .steps li.active { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
+  .steps .st { color: var(--ok-text); display: grid; }
+  .steps li.err .st { color: var(--critical-text); }
+  .steps li.final .st { color: var(--accent-text); }
+  .steps .tool { font: 12px var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .steps .tool .args { color: var(--faint); }
+  .steps .meta { margin-left: auto; font-size: 12px; color: var(--faint); white-space: nowrap; }
+  .steps.loading li { cursor: default; color: var(--muted); }
+  .steps.loading li:hover { background: none; }
 
-  /* Graph column */
-  .graph-wrap { position: relative; min-height: 0; background: radial-gradient(circle at 1px 1px, #1a212b 1px, transparent 0) 0 0 / 22px 22px, var(--canvas); overflow: hidden; }
+  /* Timeline */
+  .timeline { margin: 0; padding: 0; list-style: none; position: relative; }
+  .timeline::before { content: ""; position: absolute; left: 3px; top: 6px; bottom: 6px; width: 1px; background: var(--border-2); }
+  .timeline li { position: relative; padding: 3px 0 3px 18px; display: flex; gap: 8px; align-items: baseline; }
+  .timeline li::before { content: ""; position: absolute; left: 0; top: 10px; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+  .timeline li.other { opacity: .45; }
+  .timeline .when { color: var(--faint); font: 12px var(--mono); min-width: 34px; }
+  .timeline .what { color: var(--muted); }
+
+  /* Collapsible sections */
+  .fold { border-top: 1px solid var(--border); }
+  .fold summary { cursor: pointer; color: var(--muted); padding: 10px 0; display: flex; align-items: center; gap: 6px; list-style: none; }
+  .fold summary::-webkit-details-marker { display: none; }
+  .fold summary .chev { transition: transform .15s; }
+  .fold[open] summary .chev { transform: rotate(90deg); }
+  .fold summary:hover { color: var(--text); }
+  .fold .body { padding: 0 0 12px; }
+  .answer p { margin: 0 0 8px; color: var(--muted); }
+  .answer b { color: var(--text); font-weight: 600; }
+  .answer ul { margin: 0 0 8px; padding-left: 18px; color: var(--muted); }
+  .answer .label { color: var(--text); font-weight: 600; margin-right: 4px; }
+  .answer code { background: var(--panel-2); border-radius: 4px; padding: 0 4px; font: 12px var(--mono); }
+  .qhead { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--faint); }
+  .qhead span { flex: 1; }
+  .qbox { position: relative; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 70px 10px 10px;
+        font: 12px/1.5 var(--mono); overflow-x: auto; color: var(--accent-text); white-space: pre-wrap; margin: 8px 0 0; }
+  .copy { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 12px;
+          cursor: pointer; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+  .copy:hover { border-color: var(--border-2); color: var(--text); }
+  .copy.done { color: var(--ok-text); border-color: var(--ok-line); }
+  .qbox .copy { position: absolute; top: 6px; right: 6px; }
+
+  /* Loading */
+  .skel { height: 12px; border-radius: 4px; background: linear-gradient(90deg, var(--panel-2) 25%, var(--hover) 50%, var(--panel-2) 75%);
+          background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  .spinner { width: 14px; height: 14px; border: 2px solid var(--border-2); border-top-color: var(--accent-text); border-radius: 50%;
+             animation: spin .8s linear infinite; flex: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-card { border: 1px solid var(--critical-line); background: var(--critical-bg); border-radius: 10px; padding: 12px 14px; color: var(--critical-text); }
+
+  /* Input */
+  .input { padding: 12px 16px 16px; border-top: 1px solid var(--border); background: var(--bg); }
+  .field { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border-2);
+           border-radius: 10px; padding: 4px 4px 4px 12px; }
+  .field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(62,99,221,.2); }
+  .field input { flex: 1; min-width: 0; background: none; border: 0; color: var(--text); font: inherit; font-size: 13px; padding: 7px 0; }
+  .field input:focus { outline: none; }
+  .field input::placeholder { color: var(--faint); }
+  .send { background: var(--accent); color: #fff; border: 0; border-radius: 7px; width: 32px; height: 32px; display: grid; place-items: center; cursor: pointer; }
+  .send:hover { background: var(--accent-hover); }
+  .send:disabled { opacity: .45; cursor: wait; }
+  .hint { font-size: 12px; color: var(--faint); margin-top: 6px; min-height: 18px; }
+
+  /* Graph */
+  .graph-wrap { position: relative; min-height: 0; overflow: hidden;
+                background: radial-gradient(circle at 1px 1px, var(--grid) 1px, transparent 0) 0 0 / 20px 20px, var(--canvas); }
   #cy { position: absolute; inset: 0; }
   .overlay { position: absolute; z-index: 3; }
-  .toolbar { top: 12px; left: 12px; display: flex; gap: 6px; flex-wrap: wrap; right: 12px; pointer-events: none; }
-  .toolbar > * { pointer-events: auto; }
-  .tb { background: rgba(21,27,35,.92); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: 12px; cursor: pointer; backdrop-filter: blur(6px); }
-  .tb:hover { border-color: var(--border-2); background: var(--panel-2); }
-  .tb[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
-  .tb:disabled { opacity: .45; cursor: default; }
-  .stepper { display: flex; gap: 2px; }
-  .stepper .tb { border-radius: 0; }
-  .stepper .tb:first-child { border-radius: 8px 0 0 8px; }
-  .stepper .tb:last-child { border-radius: 0 8px 8px 0; }
-  .stepper .pos { cursor: default; min-width: 86px; text-align: center; font-variant-numeric: tabular-nums; }
-  .stepper .pos:hover { background: rgba(21,27,35,.92); border-color: var(--border); }
-  .search { background: rgba(21,27,35,.92); border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font: inherit; font-size: 12px; color: var(--text); width: 170px; }
-  .search:focus { outline: none; border-color: var(--accent); }
-  .caption { left: 50%; transform: translateX(-50%); top: 52px; background: rgba(21,27,35,.95); border: 1px solid var(--border-2); border-radius: 10px; padding: 7px 14px; font-size: 12.5px; max-width: min(640px, calc(100% - 24px)); text-align: center; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
-  .caption:empty { opacity: 0; pointer-events: none; }
-  .caption .k { color: var(--accent); font-weight: 650; margin-right: 6px; }
-  .caption code { font: 12px var(--mono); }
-  .legend { left: 12px; bottom: 12px; background: rgba(21,27,35,.92); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 11.5px; color: var(--muted); display: grid; gap: 5px; max-width: calc(100% - 24px); }
-  .legend .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-  .sw { display: inline-flex; align-items: center; gap: 5px; }
-  .sw i { width: 12px; height: 10px; border-radius: 3px; border: 2px solid var(--c); background: var(--panel-2); display: inline-block; }
-  .sw i.db { border-radius: 5px / 3px; }
-  .sw i.fill { background: var(--c); border-color: var(--c); }
-  .sw i.glow { box-shadow: 0 0 6px var(--c); }
-  .sw i.line { width: 18px; height: 0; border-width: 2px 0 0; border-style: dashed; border-radius: 0; background: none; }
-  .zoom { right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
-  .zoom .tb { width: 30px; height: 30px; padding: 0; display: grid; place-items: center; font-size: 15px; }
-  .empty { inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; }
+  .glass { background: rgba(24,25,27,.9); border: 1px solid var(--border); border-radius: var(--r); backdrop-filter: blur(8px); }
+  .gtools { top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; pointer-events: none; }
+  .gtools > * { pointer-events: auto; }
+  .search { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 32px; color: var(--faint); width: 220px; }
+  .search input { background: none; border: 0; color: var(--text); font: inherit; width: 100%; }
+  .search input:focus { outline: none; }
+  .search:focus-within { border-color: var(--accent); }
+  .tb { height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted); font-size: 12px; }
+  .tb:hover { color: var(--text); border-color: var(--border-2); }
+  .gtools .right { margin-left: auto; }
+  .stepchip { left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 12px; font-size: 12px; color: var(--muted);
+              max-width: min(620px, calc(100% - 200px)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stepchip:empty { display: none; }
+  .stepchip .k { color: var(--accent-text); font-weight: 600; margin-right: 6px; }
+  .stepchip code { font: 12px var(--mono); color: var(--text); }
+  .zoom { right: 12px; bottom: 12px; display: flex; flex-direction: column; overflow: hidden; }
+  .zoom button { width: 32px; height: 32px; display: grid; place-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; }
+  .zoom button + button { border-top: 1px solid var(--border); }
+  .zoom button:hover { color: var(--text); background: var(--hover); }
+  .legend-btn { left: 12px; bottom: 12px; }
+  .legend { left: 12px; bottom: 52px; padding: 10px 12px; font-size: 12px; color: var(--muted); display: grid; gap: 6px; }
+  .legend[hidden] { display: none; }
+  .legend .sw { display: flex; align-items: center; gap: 8px; }
+  .legend i { width: 16px; height: 11px; border-radius: 3px; border: 2px solid var(--c); background: var(--panel-2); display: inline-block; flex: none; }
+  .legend i.db { border-radius: 6px / 4px; }
+  .legend i.dash { border-style: dashed; }
+  .legend i.fill { background: var(--bgc, var(--c)); }
+  .legend i.glow { box-shadow: 0 0 6px var(--c); }
+  .legend i.line { height: 0; border-width: 2px 0 0; border-style: dashed; border-radius: 0; background: none; }
+  .legend hr { border: 0; border-top: 1px solid var(--border); margin: 2px 0; }
+  .empty { inset: 0; display: grid; place-items: center; color: var(--faint); }
 
   /* Inspector */
-  .inspector { top: 52px; right: 12px; width: 280px; max-height: calc(100% - 120px); overflow-y: auto; background: rgba(21,27,35,.97); border: 1px solid var(--border-2); border-radius: 12px; padding: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.45); transform: translateX(calc(100% + 24px)); transition: transform .22s ease; }
+  .inspector { top: 56px; right: 12px; width: 290px; max-height: calc(100% - 120px); overflow-y: auto; padding: 14px;
+               background: var(--panel); border-color: var(--border-2); box-shadow: 0 16px 40px rgba(0,0,0,.5);
+               transform: translateX(calc(100% + 24px)); transition: transform .2s ease; }
   .inspector.open { transform: none; }
-  .inspector h3 { margin: 0 24px 2px 0; font-size: 15px; word-break: break-all; }
-  .inspector .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
-  .inspector .close { position: absolute; top: 10px; right: 10px; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; }
-  .inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0 0 8px; font-size: 12.5px; }
-  .inspector dt { color: var(--muted); }
+  .inspector h3 { margin: 0 28px 2px 0; font: 600 15px var(--mono); word-break: break-all; }
+  .inspector .sub { color: var(--faint); font-size: 12px; margin-bottom: 12px; }
+  .inspector .close { position: absolute; top: 10px; right: 10px; }
+  .inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 12px; }
+  .inspector dt { color: var(--faint); }
   .inspector dd { margin: 0; }
-  .inspector .alert { border-left: 3px solid var(--c); padding: 3px 8px; margin: 4px 0; font-size: 12.5px; background: var(--panel-2); border-radius: 0 6px 6px 0; }
-  .inspector .alert small { color: var(--muted); display: block; }
-  .inspector .links { font-size: 12px; color: var(--muted); }
-  .inspector .links span { color: var(--text); }
-  .inspector .ask { margin-top: 10px; display: grid; gap: 6px; }
-  .inspector .ask button { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; text-align: left; }
-  .inspector .ask button:hover { border-color: var(--accent); }
+  .inspector h4 { font-size: 12px; color: var(--faint); font-weight: 500; margin: 12px 0 6px; }
+  .inspector .row { border-left: 2px solid var(--c); padding: 4px 8px; margin: 4px 0; background: var(--panel-2); border-radius: 0 6px 6px 0; }
+  .inspector .row small { color: var(--faint); display: block; font-size: 12px; }
+  .inspector .links { color: var(--faint); margin: 2px 0; }
+  .inspector .links span { color: var(--muted); }
+  .inspector .actions { margin-top: 12px; display: grid; gap: 6px; }
+  .inspector .actions button { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; cursor: pointer;
+                               text-align: left; display: flex; gap: 8px; align-items: center; }
+  .inspector .actions button:hover { border-color: var(--accent-line); color: var(--accent-text); }
 
   @media (max-width: 900px) {
     body { height: auto; min-height: 100%; }
     main { grid-template-columns: 1fr; grid-template-rows: auto 70vh; }
-    .chat { border-right: 0; border-bottom: 1px solid var(--border); }
-    .messages { max-height: 60vh; padding: 16px; }
-    header { padding: 10px 16px; }
-    .status { margin-left: 0; width: 100%; flex-wrap: wrap; }
-    .search { width: 130px; }
+    .side { border-right: 0; border-bottom: 1px solid var(--border); }
+    .scroll { max-height: 65vh; }
+    .by-falkor { display: none; }
+    .search { width: 160px; }
     .inspector { width: auto; left: 12px; top: auto; bottom: 12px; max-height: 55%; }
-    .legend { display: none; }
+    .stepchip { max-width: calc(100% - 120px); bottom: 56px; }
   }
 </style>
 </head>
 <body>
 <header>
-  <h1>🕵️ Incident <span>Detective</span></h1>
-  <span class="pill">FalkorDB · read-only graph tools</span>
-  <div class="status" id="status"><span><span class="dot"></span>connecting…</span></div>
+  <div class="brand"><span class="logo" data-icon="activity"></span>Incident Detective <span class="by-falkor">on FalkorDB</span></div>
+  <div class="status" id="status"><span class="chip live"><span class="dot"></span>connecting…</span></div>
 </header>
 <main>
-  <section class="chat" aria-label="Investigation">
-    <div class="messages" id="messages">
+  <section class="side" aria-label="Investigation">
+    <div class="scroll" id="panel">
       <div class="intro" id="intro">
         <h2>What broke, why, and who to page.</h2>
-        <p>The agent answers only from the graph. It picks fixed, read-only queries, every claim is checked against what they returned, and each step lights up on the map.</p>
-        <div class="chips">
-          <button data-q="checkoutservice is throwing 5xx errors. What broke?">🔥 checkoutservice is throwing 5xx errors. What broke?<small>root cause</small></button>
-          <button data-q="What breaks if payments-db goes down?">💥 What breaks if payments-db goes down?<small>blast radius</small></button>
-          <button data-q="Which services are most critical?">🎯 Which services are most critical?<small>centrality</small></button>
-          <button data-q="Is the adservice alert related to the checkout errors?">🔍 Is the adservice alert related to the checkout errors?<small>red herring</small></button>
-          <button data-q="billing-service is down, who do I page?">🚫 billing-service is down, who do I page?<small>not in graph</small></button>
+        <p>Ask about an incident. The agent answers only from the service graph, using fixed read-only queries, and every claim is checked against what they returned.</p>
+        <div class="examples">
+          <button class="example" data-q="checkoutservice is throwing 5xx errors. What broke?"><span class="ico" data-icon="zap"></span><span><b>checkoutservice is throwing 5xx errors. What broke?</b><small>Root cause and who to page</small></span></button>
+          <button class="example" data-q="What breaks if payments-db goes down?"><span class="ico" data-icon="network"></span><span><b>What breaks if payments-db goes down?</b><small>Blast radius</small></span></button>
+          <button class="example" data-q="Which services are most critical?"><span class="ico" data-icon="target"></span><span><b>Which services are most critical?</b><small>Betweenness centrality</small></span></button>
+          <button class="example" data-q="Is the adservice alert related to the checkout errors?"><span class="ico" data-icon="search"></span><span><b>Is the adservice alert related to the checkout errors?</b><small>Red herring</small></span></button>
+          <button class="example" data-q="billing-service is down, who do I page?"><span class="ico" data-icon="help"></span><span><b>billing-service is down, who do I page?</b><small>Not in the graph</small></span></button>
+        </div>
+        <div class="how">
+          <div><span data-icon="shield"></span>The model never writes Cypher. It picks one of six parameterised, read-only tools.</div>
+          <div><span data-icon="check"></span>Names, versions and people in the answer must come from a tool result.</div>
+          <div><span data-icon="list"></span>If no model is available, a rules diagnosis answers from the graph.</div>
         </div>
       </div>
+      <article id="inv" hidden></article>
     </div>
     <form class="input" id="form">
-      <input id="question" placeholder="Ask about an incident…" autocomplete="off" maxlength="500" aria-label="Question">
-      <button id="send">Ask</button>
+      <div class="field">
+        <input id="question" placeholder="Describe the incident…" autocomplete="off" maxlength="500" aria-label="Question">
+        <button class="send" id="send" aria-label="Ask"><span data-icon="arrowUp"></span></button>
+      </div>
+      <div class="hint" id="hint"></div>
     </form>
   </section>
 
@@ -216,46 +343,36 @@
     <div id="cy"></div>
     <div class="overlay empty" id="empty">Loading graph…</div>
 
-    <div class="overlay toolbar">
-      <input class="search" id="search" list="svc-list" placeholder="Find a service…" aria-label="Find a service">
+    <div class="overlay gtools">
+      <label class="glass search"><span data-icon="search"></span><input id="search" list="svc-list" placeholder="Find a service" aria-label="Find a service"></label>
       <datalist id="svc-list"></datalist>
-      <div class="stepper" role="group" aria-label="Step through the answer">
-        <button class="tb" id="prev" type="button" disabled title="Previous step (← key)" aria-label="Previous step">◀</button>
-        <span class="tb pos" id="pos" aria-live="polite">No answer yet</span>
-        <button class="tb" id="next" type="button" disabled title="Next step (→ key)" aria-label="Next step">▶</button>
-        <button class="tb" id="replay" type="button" disabled title="Play the steps automatically">⏵ Play</button>
-      </div>
-      <button class="tb" id="answerView" type="button" aria-pressed="false" disabled>Answer view</button>
-      <button class="tb" id="showAll" type="button">Show all</button>
+      <button class="glass tb right" id="showAll" type="button" title="Clear the highlight and show the whole graph"><span data-icon="reset"></span>Reset view</button>
     </div>
-    <div class="overlay caption" id="caption"></div>
+    <div class="overlay glass stepchip" id="caption" aria-live="polite"></div>
 
-    <aside class="overlay inspector" id="inspector" aria-live="polite">
-      <button class="close" id="closeInspector" aria-label="Close">✕</button>
+    <aside class="overlay glass inspector" id="inspector" aria-live="polite">
+      <button class="ghost close" id="closeInspector" aria-label="Close"><span data-icon="x"></span></button>
       <div id="inspectorBody"></div>
     </aside>
 
-    <div class="overlay legend">
-      <div class="row">
-        <span class="sw"><i style="--c:var(--service)"></i>Service</span>
-        <span class="sw"><i class="db" style="--c:var(--data)"></i>Datastore</span>
-        <span class="sw"><i style="--c:var(--external)"></i>External</span>
-        <span class="sw"><i class="fill" style="--c:var(--deploy)"></i>Deploy (1h)</span>
-        <span class="sw"><i class="fill" style="--c:var(--team)"></i>Team</span>
-        <span class="sw"><i class="fill" style="--c:var(--person)"></i>On call</span>
-      </div>
-      <div class="row">
-        <span class="sw"><i class="glow" style="--c:var(--critical)"></i>Critical alert</span>
-        <span class="sw"><i class="glow" style="--c:var(--high)"></i>High</span>
-        <span class="sw"><i class="glow" style="--c:var(--medium)"></i>Medium</span>
-        <span class="sw"><i class="line" style="--c:var(--accent)"></i>Impact path</span>
-        <span>A → B: A calls B</span>
-      </div>
+    <button class="overlay glass tb legend-btn" id="legendBtn" type="button" aria-expanded="false"><span data-icon="layers"></span>Legend</button>
+    <div class="overlay glass legend" id="legend" hidden>
+      <span class="sw"><i style="--c:var(--line)"></i>Service</span>
+      <span class="sw"><i class="db" style="--c:var(--data)"></i>Datastore</span>
+      <span class="sw"><i class="dash" style="--c:var(--line)"></i>External API</span>
+      <span class="sw"><i class="fill" style="--c:var(--accent);--bgc:var(--accent-bg)"></i>Deploy, last hour</span>
+      <span class="sw"><i class="fill" style="--c:var(--ok);--bgc:var(--ok-bg)"></i>Team and on-call</span>
+      <hr>
+      <span class="sw"><i class="glow" style="--c:var(--critical)"></i>Critical alert</span>
+      <span class="sw"><i class="glow" style="--c:var(--high)"></i>High alert</span>
+      <span class="sw"><i class="glow" style="--c:var(--medium)"></i>Medium alert</span>
+      <span class="sw"><i class="line" style="--c:var(--critical)"></i>Failure path</span>
+      <span class="sw">A → B means A calls B</span>
     </div>
-    <div class="overlay zoom">
-      <button class="tb" id="zoomIn" type="button" aria-label="Zoom in">+</button>
-      <button class="tb" id="zoomOut" type="button" aria-label="Zoom out">−</button>
-      <button class="tb" id="fit" type="button" aria-label="Fit graph">⤢</button>
+    <div class="overlay glass zoom">
+      <button id="zoomIn" type="button" aria-label="Zoom in"><span data-icon="plus"></span></button>
+      <button id="zoomOut" type="button" aria-label="Zoom out"><span data-icon="minus"></span></button>
+      <button id="fit" type="button" aria-label="Fit graph"><span data-icon="fit"></span></button>
     </div>
   </section>
 </main>
@@ -265,12 +382,54 @@
 // Setup
 // ============================================================================
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const C = Object.fromEntries(['service', 'data', 'external', 'deploy', 'team', 'person', 'critical', 'high',
-  'medium', 'accent', 'text', 'muted', 'panel', 'panel-2', 'border', 'border-2', 'canvas']
+const C = Object.fromEntries(['bg', 'panel', 'panel-2', 'hover', 'border', 'border-2', 'line', 'faint', 'muted', 'text',
+  'accent', 'accent-text', 'accent-bg', 'critical', 'critical-bg', 'high', 'high-bg', 'medium', 'ok', 'ok-bg', 'data']
   .map(k => [k, css('--' + k)]));
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const svc = s => `svc:${s}`;
+const SEV = { critical: C.critical, high: C.high, medium: C.medium, low: C.medium };
+const SEV_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+const FONT = 'Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+/** Lucide icons (lucide.dev, ISC licence), inlined so there is no runtime dependency. */
+const ICONS = {
+  activity: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+  zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  network: '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>',
+  target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  checkCircle: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  xCircle: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  list: '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+  commit: '<circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/>',
+  bell: '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M22 8c0-2.3-.8-4.3-2-6"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/>',
+  cpu: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  pause: '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+  left: '<path d="m15 18-6-6 6-6"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
+  chev: '<path d="m9 18 6-6-6-6"/>',
+  arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  arrowUp: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  flag: '<path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"/>',
+  history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  reset: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  minus: '<path d="M5 12h14"/>',
+  fit: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+};
+/** SVG markup for icon `name`; `cls` "sm" gives the 14px size. */
+const icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+/** Fill every static `data-icon` placeholder in the page. */
+document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
 
 /**
  * Send a browser error to the server, which prints it in its terminal
@@ -286,18 +445,19 @@ function reportError(message, where = '', stack = '') {
 }
 window.addEventListener('error', e => reportError(e.message, `${e.filename}:${e.lineno}:${e.colno}`, e.error?.stack));
 window.addEventListener('unhandledrejection', e => reportError(`unhandled promise: ${e.reason?.message || e.reason}`, '', e.reason?.stack));
-const SEV = { critical: C.critical, high: C.high, medium: C.medium, low: C.medium };
 
 cytoscape.use(cytoscapeDagre);
 
 let cy = null;            // the Cytoscape instance
-let current = null;       // {out, list}: the last answer, for replay and answer view
-let timer = null;         // step replay timer
-let pos = -1;             // where the stepper is: -1 none, 0..n-1 a tool step, n the answer view
-let flowFrame = null;     // impact path animation frame
+let current = null;       // {out, list}: the shown answer, for stepping and the verdict view
+let timer = null;         // Play timer
+let pos = -1;             // where the stepper is: -1 none, 0..n-1 a tool step, n the verdict view
+let flowFrame = null;     // failure path animation frame
 let services = [];        // service names, for search and for linking names in answers
-let home = null;          // {zoom, pan}: the fixed camera for replay and answer view, set after layout
+let home = null;          // {zoom, pan}: the fixed camera for stepping, set after layout
 let shape = '';           // node and edge ids of the drawn graph, to skip redraws when nothing moved
+const history = [];       // [{q, out}] answers in this session, newest last
+let busy = false;         // a question is being answered
 
 // Readable names for the models in agent.FALLBACK_CHAIN; unknown ids are shown as-is.
 const MODEL_NAMES = {
@@ -310,6 +470,9 @@ const WHY = { RateLimitError: 'rate limited', APITimeoutError: 'timed out', Inte
               AuthenticationError: 'bad API key', BadRequestError: 'rejected the request',
               APIConnectionError: 'unreachable', 'skipped': 'out of time' };
 
+/** "1 tool call" / "3 tool calls": a count with the right noun form. */
+function plural(n, one, many = one + 's') { return `${n} ${n === 1 ? one : many}`; }
+
 // ============================================================================
 // Graph drawing
 // ============================================================================
@@ -320,45 +483,57 @@ function shortAlert(msg) {
   return head.length > 24 ? head.slice(0, 23) + '…' : head;
 }
 
-/** Cytoscape stylesheet. States are classes: faded, lit, muted, path, root, impacted, focus. */
+/**
+ * Node box size for a label: width from the longest line, height from the line
+ * count. Sizes are data fields because Cytoscape deprecated width: 'label'.
+ */
+function dims(text, kind) {
+  const lines = String(text).split('\n');
+  const longest = Math.max(...lines.map(l => l.length));
+  if (kind === 'deploy') return { w: Math.max(56, longest * 7.2 + 22), h: 24 };
+  return { w: Math.max(92, longest * 7.4 + 28), h: 18 + lines.length * 17 };
+}
+
+/** Set a node's drawn label and resize its box to fit. */
+function setDisplay(n, text) { n.data({ display: text, ...dims(text, n.data('kind')) }); }
+
+/** Cytoscape stylesheet. States are classes: faded, lit, muted, path, root, impacted, focus, context. */
 function stylesheet() {
   return [
     { selector: 'node', style: {
         'label': 'data(display)', 'text-wrap': 'wrap', 'text-valign': 'center', 'text-halign': 'center',
-        'font-size': 13, 'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif',
-        'color': C.text, 'width': 'label', 'height': 'label', 'padding': '9px',
-        'background-color': C.panel, 'border-width': 2, 'border-color': C.service,
+        'font-size': 13, 'font-family': FONT, 'font-weight': 500, 'line-height': 1.3,
+        'color': C.text, 'width': 'data(w)', 'height': 'data(h)',
+        'background-color': C.panel, 'border-width': 1.5, 'border-color': C.line,
         'shape': 'round-rectangle', 'underlay-opacity': 0, 'underlay-shape': 'round-rectangle' } },
-    { selector: 'node[tier = "data"]', style: { 'shape': 'barrel', 'border-color': C.data, 'padding': '11px' } },
-    { selector: 'node[tier = "external"]', style: { 'shape': 'cut-rectangle', 'border-color': C.external, 'border-style': 'dashed' } },
+    { selector: 'node[tier = "data"]', style: { 'shape': 'barrel', 'border-color': C.data } },
+    { selector: 'node[tier = "external"]', style: { 'border-style': 'dashed', 'color': C.muted } },
     { selector: 'node[tier = "edge"]', style: { 'font-weight': 600 } },
     // Health: border colour and a soft glow from the worst open alert.
-    { selector: 'node[health]', style: { 'border-width': 3, 'underlay-opacity': .28, 'underlay-padding': 7 } },
+    { selector: 'node[health]', style: { 'border-width': 2, 'underlay-opacity': .22, 'underlay-padding': 6 } },
     { selector: 'node[health = "critical"]', style: { 'border-color': C.critical, 'underlay-color': C.critical } },
     { selector: 'node[health = "high"]', style: { 'border-color': C.high, 'underlay-color': C.high } },
-    { selector: 'node[health = "medium"]', style: { 'border-color': C.medium, 'underlay-color': C.medium, 'underlay-opacity': .16 } },
-    { selector: 'node[kind = "deploy"]', style: { 'shape': 'tag', 'background-color': C.deploy, 'border-color': C.deploy,
-        'color': '#1a1400', 'font-weight': 700, 'font-size': 11.5, 'padding': '6px' } },
-    { selector: 'node[kind = "team"]', style: { 'shape': 'round-rectangle', 'background-color': C.team, 'border-color': C.team,
-        'color': '#04201e', 'font-weight': 700 } },
-    { selector: 'node[kind = "person"]', style: { 'shape': 'round-rectangle', 'background-color': C.person,
-        'border-color': C.person, 'color': '#06200b', 'font-weight': 700 } },
+    { selector: 'node[health = "medium"]', style: { 'border-color': C.medium, 'underlay-color': C.medium, 'underlay-opacity': .12 } },
+    { selector: 'node[kind = "deploy"]', style: { 'shape': 'tag', 'background-color': C['accent-bg'], 'border-color': C.accent,
+        'color': C['accent-text'], 'font-family': '"Geist Mono", ui-monospace, monospace', 'font-size': 11.5 } },
+    { selector: 'node[kind = "team"]', style: { 'background-color': C['panel-2'], 'border-color': C.ok, 'font-weight': 600 } },
+    { selector: 'node[kind = "person"]', style: { 'background-color': C['ok-bg'], 'border-color': C.ok, 'border-width': 2, 'font-weight': 600 } },
     { selector: 'edge', style: {
-        'width': 1.4, 'line-color': '#3a4350', 'target-arrow-color': '#3a4350', 'target-arrow-shape': 'triangle',
-        'arrow-scale': .8, 'curve-style': 'bezier' } },
-    { selector: 'edge[rel != "DEPENDS_ON"]', style: { 'line-style': 'dashed', 'line-dash-pattern': [4, 4] } },
-    { selector: 'edge[rel = "TO"]', style: { 'line-color': C.deploy, 'target-arrow-color': C.deploy } },
-    { selector: 'edge[rel = "OWNS"], edge[rel = "ON_CALL"]', style: { 'line-color': C.team, 'target-arrow-color': C.team } },
+        'width': 1.3, 'line-color': C.line, 'target-arrow-color': C.line, 'target-arrow-shape': 'triangle',
+        'arrow-scale': .75, 'curve-style': 'round-taxi', 'taxi-direction': 'horizontal', 'taxi-radius': 10 } },
+    { selector: 'edge[rel != "DEPENDS_ON"]', style: { 'curve-style': 'straight', 'line-style': 'dashed', 'line-dash-pattern': [4, 4] } },
+    { selector: 'edge[rel = "TO"]', style: { 'line-color': C.accent, 'target-arrow-color': C.accent } },
+    { selector: 'edge[rel = "OWNS"], edge[rel = "ON_CALL"]', style: { 'line-color': C.ok, 'target-arrow-color': C.ok } },
     // States.
-    { selector: '.faded', style: { 'opacity': .13 } },
-    { selector: '.context', style: { 'opacity': .38 } },
-    { selector: 'node.muted', style: { 'opacity': .55, 'border-style': 'dashed', 'border-color': C.muted, 'underlay-opacity': 0 } },
-    { selector: 'edge.lit', style: { 'line-color': '#6e7681', 'target-arrow-color': '#6e7681', 'width': 1.8 } },
-    { selector: 'edge.path', style: { 'line-color': C.accent, 'target-arrow-color': C.accent, 'width': 4,
-        'line-style': 'dashed', 'line-dash-pattern': [10, 6], 'z-index': 10 } },
-    { selector: 'node.impacted', style: { 'border-color': C.high, 'background-color': '#2a1d10' } },
-    { selector: 'node.root', style: { 'underlay-color': C.accent, 'underlay-opacity': .45, 'underlay-padding': 10 } },
-    { selector: 'node.focus', style: { 'border-width': 4, 'border-color': C.text } },
+    { selector: '.faded', style: { 'opacity': .2 } },
+    { selector: '.context', style: { 'opacity': .5 } },
+    { selector: 'node.muted', style: { 'opacity': .6, 'border-style': 'dashed', 'border-color': C.faint, 'underlay-opacity': 0, 'color': C.muted } },
+    { selector: 'edge.lit', style: { 'line-color': C.faint, 'target-arrow-color': C.faint, 'width': 1.8 } },
+    { selector: 'edge.path', style: { 'line-color': C.critical, 'target-arrow-color': C.critical, 'width': 3,
+        'line-style': 'dashed', 'line-dash-pattern': [9, 5], 'z-index': 10 } },
+    { selector: 'node.impacted', style: { 'border-color': C.high, 'background-color': C['high-bg'] } },
+    { selector: 'node.root', style: { 'underlay-color': C.critical, 'underlay-opacity': .4, 'underlay-padding': 9 } },
+    { selector: 'node.focus', style: { 'border-width': 2.5, 'border-color': C['accent-text'] } },
     { selector: 'node:selected', style: { 'overlay-opacity': 0 } },
   ];
 }
@@ -368,13 +543,20 @@ function toElement(n) {
   let sub = '';
   if (n.kind === 'service' && n.alerts.length) sub = '● ' + shortAlert(n.alerts[0].message);
   const label = n.kind === 'deploy' ? `${n.version}` : n.label;
-  return { group: 'nodes', data: { ...n, health: n.health || undefined, sub, base: label,
-                                   display: sub ? `${label}\n${sub}` : label } };
+  const display = sub ? `${label}\n${sub}` : label;
+  return { group: 'nodes', data: { ...n, health: n.health || undefined, sub, base: label, display, ...dims(display, n.kind) } };
+}
+
+/** Wait (at most 1.5 s) for the web font, so Cytoscape measures and draws labels in Geist. */
+function fontsReady() {
+  if (!document.fonts) return Promise.resolve();
+  return Promise.race([Promise.all([document.fonts.load(`500 13px Geist`), document.fonts.load(`11px "Geist Mono"`)]),
+                       new Promise(r => setTimeout(r, 1500))]).catch(() => {});
 }
 
 /** Fetch /api/graph and draw it with a fresh layered layout. */
 async function loadGraph() {
-  const r = await fetch('/api/graph');
+  const [r] = await Promise.all([fetch('/api/graph'), fontsReady()]);
   if (!r.ok) throw new Error(`/api/graph: HTTP ${r.status}`);
   const data = await r.json();
   const elements = data.nodes.map(toElement).concat(data.edges.map(e => ({
@@ -399,8 +581,9 @@ async function loadGraph() {
   $('svc-list').innerHTML = [...services].sort().map(s => `<option value="${esc(s)}">`).join('');
   $('empty')?.remove();
   const c = data.counts, bad = data.nodes.filter(n => n.health).length;
-  setStatus(true, `<span><b>${c.services}</b> services</span><span><b>${c.deploys}</b> deploy${c.deploys === 1 ? '' : 's'} (1h)</span>`
-    + `<span><b>${c.alerts}</b> open alert${c.alerts === 1 ? '' : 's'} on <b>${bad}</b> service${bad === 1 ? '' : 's'}</span>`);
+  setStatus(true, `<span class="chip"><b class="num">${c.services}</b> services</span>`
+    + `<span class="chip"><b class="num">${c.deploys}</b> deploy${c.deploys === 1 ? '' : 's'} · 1h</span>`
+    + `<span class="chip"><b class="num">${c.alerts}</b> alert${c.alerts === 1 ? '' : 's'} on <b class="num">${bad}</b> ${bad === 1 ? 'service' : 'services'}</span>`);
 }
 
 /**
@@ -410,47 +593,50 @@ async function loadGraph() {
  */
 function layout() {
   const core = cy.nodes('[kind = "service"]');
-  core.union(core.edgesWith(core)).layout({ name: 'dagre', rankDir: 'LR', nodeSep: 18, rankSep: 60,
+  core.union(core.edgesWith(core)).layout({ name: 'dagre', rankDir: 'LR', nodeSep: 16, rankSep: 70,
     edgeSep: 8, ranker: 'network-simplex', animate: false, fit: false }).run();
   cy.nodes('[kind = "deploy"]').forEach(d => {
     const s = cy.getElementById(svc(d.data('service')));
     const stacked = cy.nodes(`[kind = "deploy"][service = "${d.data('service')}"]`).indexOf(d);
-    d.position({ x: s.position('x'), y: s.position('y') - s.outerHeight() / 2 - 20 - stacked * 26 });
+    d.position({ x: s.position('x'), y: s.position('y') - s.outerHeight() / 2 - 18 - stacked * 28 });
   });
   setHome();
 }
 
-/** Fit the drawn graph and remember that camera as `home`, with extra room at the bottom for paging nodes. */
+/**
+ * Fit the drawn graph and remember that camera as `home`. A little room is left
+ * at the bottom for the team and on-call nodes added when paging.
+ */
 function setHome() {
-  cy.fit(cy.nodes('[!ephemeral]'), 40);
-  cy.zoom({ level: cy.zoom() * 0.92, renderedPosition: { x: cy.width() / 2, y: cy.height() * 0.42 } });
+  cy.fit(cy.nodes('[!ephemeral]'), 28);
+  cy.zoom({ level: Math.min(1.4, cy.zoom() * 0.95), renderedPosition: { x: cy.width() / 2, y: cy.height() * 0.45 } });
   home = { zoom: cy.zoom(), pan: { ...cy.pan() } };
 }
 
 /**
  * Move the camera back to the whole-graph view, unless it is already there.
- * Replay and answer view always use this one camera, so stepping through an
- * answer only changes the highlight, never the zoom.
+ * Stepping through an answer always uses this one camera, so it only changes
+ * the highlight, never the zoom.
  */
 function goHome() {
   if (!home) return;
   const p = cy.pan();
   if (Math.abs(cy.zoom() - home.zoom) < 1e-3 && Math.abs(p.x - home.pan.x) < 1 && Math.abs(p.y - home.pan.y) < 1) return;
   cy.stop(true);
-  cy.animate({ zoom: home.zoom, pan: home.pan, duration: 450, easing: 'ease-in-out-cubic' });
+  cy.animate({ zoom: home.zoom, pan: home.pan, duration: 400, easing: 'ease-in-out-cubic' });
 }
 
-/** Header status line; `html` is trusted markup built from numbers. */
+/** Header status chips; `html` is trusted markup built from numbers. */
 function setStatus(ok, html) {
   $('status').className = 'status ' + (ok ? 'ok' : 'bad');
-  $('status').innerHTML = `<span><span class="dot"></span>${ok ? 'graph live' : 'graph offline'}</span>${html}`;
+  $('status').innerHTML = `<span class="chip live"><span class="dot"></span>${ok ? 'Live' : 'Graph offline'}</span>${html}`;
 }
 
 /** Click, hover and background handlers for a new Cytoscape instance. */
 function wireGraph() {
   cy.on('tap', 'node', e => { stopReplay(); focusNode(e.target); });
   cy.on('tap', e => { if (e.target === cy) { closeInspector(); if (current) showAnswer(); else showAll(); } });
-  cy.on('mouseover', 'node', e => { $('cy').style.cursor = 'pointer'; });
+  cy.on('mouseover', 'node', () => { $('cy').style.cursor = 'pointer'; });
   cy.on('mouseout', 'node', () => { $('cy').style.cursor = ''; });
 }
 
@@ -463,13 +649,16 @@ function resetMarks() {
   stopFlow();
   cy.elements().removeClass('faded context lit muted path root impacted focus');
   cy.edges().removeStyle('line-dash-offset');
-  cy.nodes('[kind = "service"]').forEach(n => n.data('display', n.data('sub') ? `${n.data('base')}\n${n.data('sub')}` : n.data('base')));
+  cy.nodes('[kind = "service"]').forEach(n => {
+    const want = n.data('sub') ? `${n.data('base')}\n${n.data('sub')}` : n.data('base');
+    if (n.data('display') !== want) setDisplay(n, want);
+  });
   cy.remove('[?ephemeral]');
 }
 
 /**
  * Fade everything except `lit` nodes. Edges between two lit nodes are lit;
- * edges whose id is in `pathEdges` become the animated impact path.
+ * edges whose id is in `pathEdges` become the animated failure path.
  */
 function spotlight(lit, { muted = [], pathEdges = [], roots = [], impacted = [], context = [] } = {}) {
   resetMarks();
@@ -486,12 +675,12 @@ function spotlight(lit, { muted = [], pathEdges = [], roots = [], impacted = [],
   return keep;
 }
 
-/** Animate the impact path: dashes run from callee back to caller, the way failure spreads. */
+/** Animate the failure path: dashes run from callee back to caller, the way failure spreads. */
 function startFlow() {
   stopFlow();
   let offset = 0;
   const step = () => {
-    offset = (offset + 0.6) % 16;
+    offset = (offset + 0.5) % 14;
     cy.edges('.path').style('line-dash-offset', offset);
     flowFrame = requestAnimationFrame(step);
   };
@@ -503,20 +692,16 @@ function stopFlow() { if (flowFrame) cancelAnimationFrame(flowFrame); flowFrame 
 function showAll() {
   stopReplay(); resetMarks(); setCaption('');
   pos = -1; updateStepper();
-  $('answerView').setAttribute('aria-pressed', 'false');
-  document.querySelectorAll('.steps li').forEach(li => li.classList.remove('active'));
 }
 
 /** Zoom to `eles` (with padding), animated. */
 function frame(eles) {
   if (!eles || !eles.length) return;
   cy.stop(true);   // drop camera moves still queued from earlier clicks
-  cy.animate({ fit: { eles, padding: 70 }, duration: 450, easing: 'ease-in-out-cubic' });
+  cy.animate({ fit: { eles, padding: 70 }, duration: 400, easing: 'ease-in-out-cubic' });
 }
 
-/** Caption over the graph; `html` is built by callers with esc() on any data. */
-/** "1 tool call" / "3 tool calls": a count with the right noun form. */
-function plural(n, one, many = one + 's') { return `${n} ${n === 1 ? one : many}`; }
+/** Step chip over the graph; `html` is built by callers with esc() on any data. */
 function setCaption(html) { $('caption').innerHTML = html; }
 
 // ============================================================================
@@ -524,12 +709,12 @@ function setCaption(html) { $('caption').innerHTML = html; }
 // ============================================================================
 
 /**
- * First y at or below `y` where a node about 140 wide and `h` tall centred on `x`
+ * First y at or below `y` where a node about 150 wide and `h` tall centred on `x`
  * would not overlap any drawn node, so paging nodes never cover services.
  */
 function freeY(x, y, h) {
   const boxes = cy.nodes().map(n => n.boundingBox());
-  const hits = yy => boxes.some(b => b.x1 < x + 80 && b.x2 > x - 80 && b.y1 < yy + h / 2 + 6 && b.y2 > yy - h / 2 - 6);
+  const hits = yy => boxes.some(b => b.x1 < x + 85 && b.x2 > x - 85 && b.y1 < yy + h / 2 + 6 && b.y2 > yy - h / 2 - 6);
   while (hits(y)) y += 12;
   return y;
 }
@@ -540,11 +725,12 @@ function addPageNodes(service, team, person) {
   if (!s.length || !team) return [];
   const tid = `team:${team}`, pid = person ? `person:${person}` : null;
   const p = s.position(), below = s.outerHeight() / 2;
-  const ty = freeY(p.x, p.y + below + 40, 30), py = freeY(p.x, ty + 52, 30);
-  const els = [{ group: 'nodes', data: { id: tid, kind: 'team', display: `${team} team`, ephemeral: true },
+  const ty = freeY(p.x, p.y + below + 40, 35), py = freeY(p.x, ty + 54, 35);
+  const tLabel = `${team} team`, pLabel = `${person} · on call`;
+  const els = [{ group: 'nodes', data: { id: tid, kind: 'team', display: tLabel, ephemeral: true, ...dims(tLabel) },
                  position: { x: p.x, y: ty } },
                { group: 'edges', data: { id: `${tid}->${svc(service)}`, source: tid, target: svc(service), rel: 'OWNS', ephemeral: true } }];
-  if (pid) els.push({ group: 'nodes', data: { id: pid, kind: 'person', display: `📟 ${person}`, ephemeral: true },
+  if (pid) els.push({ group: 'nodes', data: { id: pid, kind: 'person', display: pLabel, ephemeral: true, ...dims(pLabel) },
                       position: { x: p.x, y: py } },
                     { group: 'edges', data: { id: `${pid}->${tid}`, source: pid, target: tid, rel: 'ON_CALL', ephemeral: true } });
   cy.add(els);
@@ -558,27 +744,40 @@ function addPageNodes(service, team, person) {
 /** Edge ids along a list of service names: [a, b, c] -> ["svc:a->svc:b", "svc:b->svc:c"]. */
 const pathEdgeIds = path => path.slice(1).map((s, i) => `${svc(path[i])}->${svc(s)}`);
 
-/** Plain-language caption for one step, with its row count. */
+/** One-line result of a step, e.g. "5 services" or "Priya Nair on call". */
+function stepResult(st) {
+  const r = st.result || {};
+  if (r.error) return 'error';
+  return {
+    recent_changes: () => `${plural(r.deploys.length, 'deploy')}, ${plural(r.alerts.length, 'alert')}`,
+    dependencies: () => plural(r.depends_on.length, 'service'),
+    blast_radius: () => `${plural(r.affected.length, 'service')} affected`,
+    dependency_path: () => r.path ? plural(r.path.length - 1, 'hop') : 'no path',
+    critical_services: () => `${r.ranking.length} ranked`,
+    who_to_page: () => r.on_call ? `${r.on_call} on call` : 'nobody on call',
+  }[st.tool]?.() ?? '';
+}
+
+/** Plain-language caption for one step, for the chip over the graph. */
 function stepCaption(st, i, n) {
   const r = st.result || {}, args = Object.values(st.args || {}).join(', ');
-  const head = `<span class="k">Step ${i + 1}/${n}</span><code>${esc(st.tool)}(${esc(args)})</code> → `;
-  if (r.error) return head + `<span style="color:var(--critical)">${esc(r.error)}</span>`;
+  const head = `<span class="k">Step ${i + 1}/${n}</span><code>${esc(st.tool)}(${esc(args)})</code> · `;
+  if (r.error) return head + `<span style="color:var(--critical-text)">${esc(r.error)}</span>`;
   const say = {
-    recent_changes: () => `${r.deploys.length} deploy(s) and ${r.alerts.length} open alert(s) in the last hour`,
-    dependencies: () => `${r.service} calls ${r.depends_on.length} services, directly or indirectly`,
-    blast_radius: () => `${r.affected.length} services break if ${r.service} goes down`,
-    dependency_path: () => r.path ? `call path: ${r.path.join(' → ')} (${r.latency_ms} ms)` : 'no dependency path',
+    recent_changes: () => `${plural(r.deploys.length, 'deploy')} and ${plural(r.alerts.length, 'open alert')} in the last hour`,
+    dependencies: () => `${r.service} calls ${plural(r.depends_on.length, 'service')}, directly or indirectly`,
+    blast_radius: () => `${plural(r.affected.length, 'service')} break if ${r.service} goes down`,
+    dependency_path: () => r.path ? `${r.path.join(' → ')} (${r.latency_ms} ms)` : 'no dependency path',
     critical_services: () => `ranked by ${r.metric}: ${r.ranking.slice(0, 3).map(x => x.service).join(', ')}…`,
     who_to_page: () => `${r.service} is owned by ${r.team}; on call: ${r.on_call || 'nobody'}`,
   }[st.tool];
   return head + esc(say ? say() : '');
 }
 
-/** Light up what step `st` touched. Each step stands alone; the camera does not move. */
-function showStep(out, i, list) {
+/** Light up what step `i` touched. Each step stands alone; the camera does not move. */
+function showStep(out, i) {
   const st = out.steps[i], r = st.result || {};
   pos = i; updateStepper();
-  list.querySelectorAll('li').forEach((li, j) => li.classList.toggle('active', j === i));
   setCaption(stepCaption(st, i, out.steps.length));
   if (r.error) { spotlight([]); return; }
   let lit = [], opts = {};
@@ -591,12 +790,11 @@ function showStep(out, i, list) {
       lit = [svc(r.service), ...r.depends_on.map(d => svc(d.service))];
       opts.roots = [svc(r.service)];
       break;
-    case 'blast_radius': {
+    case 'blast_radius':
       lit = [svc(r.service), ...r.affected.map(d => svc(d.service))];
       opts.roots = [svc(r.service)];
       opts.impacted = r.affected.map(d => svc(d.service));
       break;
-    }
     case 'dependency_path':
       if (r.path) { lit = r.path.map(svc); opts.pathEdges = pathEdgeIds(r.path); }
       break;
@@ -610,54 +808,48 @@ function showStep(out, i, list) {
   }
   const keep = spotlight(lit, opts);
   // Per-step second lines: hop counts for blast radius, rank for centrality.
-  if (st.tool === 'blast_radius') r.affected.forEach(d => cy.getElementById(svc(d.service)).data('display', `${d.service}\n${d.hops} hop${d.hops > 1 ? 's' : ''} away`));
-  if (st.tool === 'critical_services') r.ranking.forEach((x, k) => cy.getElementById(svc(x.service)).data('display', `${x.service}\n#${k + 1} · ${x.score}`));
+  if (st.tool === 'blast_radius') r.affected.forEach(d => setDisplay(cy.getElementById(svc(d.service)), `${d.service}\n${plural(d.hops, 'hop')} away`));
+  if (st.tool === 'critical_services') r.ranking.forEach((x, k) => setDisplay(cy.getElementById(svc(x.service)), `${x.service}\n#${k + 1} · ${x.score}`));
   if (st.tool === 'who_to_page') {
     const ids = addPageNodes(r.service, r.team, r.on_call);
     ids.forEach(id => keep.merge(cy.getElementById(id)));
-    cy.getElementById(svc(r.service)).connectedEdges('[?ephemeral]').removeClass('faded').addClass('lit');
     keep.connectedEdges('[?ephemeral]').removeClass('faded').addClass('lit');
   }
   goHome();
 }
 
 /**
- * The final picture for an answer: the failure chain, the impact path from the
- * blamed deploy to the failing service, who to page; services the answer called
+ * The verdict picture: the failure chain, the failure path from the blamed
+ * deploy to the failing service, who to page; services the answer called
  * unrelated are drawn dashed. Questions without a chain (blast radius,
- * centrality) end on their last step's picture instead.
+ * centrality) end on their most telling step's picture instead.
  */
 function showAnswer() {
   if (!current) return;
   const { out } = current, s = out.summary;
   stopReplay();
-  $('answerView').setAttribute('aria-pressed', 'true');
-  document.querySelectorAll('.steps li').forEach(li => li.classList.remove('active'));
+  const n = out.steps.length;
   if (!s.root_cause && !s.path) {
-    // No failure chain (blast radius, ranking, or an undecided answer): end on the
-    // most telling step's picture, with the owner and on-call added if paged.
     const rich = ['blast_radius', 'critical_services', 'dependency_path', 'dependencies'];
     let i = out.steps.map(st => st.tool).findLastIndex(t => rich.includes(t));
-    if (i < 0) i = out.steps.length - 1;
+    if (i < 0) i = n - 1;
     if (i < 0) { showAll(); return; }
-    showStep(out, i, current.list);
-    current.list.querySelectorAll('li').forEach(li => li.classList.remove('active'));
+    showStep(out, i);
     if (s.page && out.steps[i].tool !== 'who_to_page') {
       const ids = addPageNodes(s.page.service, s.page.team, s.page.on_call);
       ids.forEach(id => cy.getElementById(id).removeClass('faded'));
       cy.getElementById(svc(s.page.service)).removeClass('faded');
       cy.elements('[?ephemeral]').removeClass('faded').addClass('lit');
     }
-    const st = out.steps[i];
-    setCaption(stepCaption(st, i, out.steps.length).replace(/^<span class="k">[^<]*<\/span>/, '<span class="k">Answer</span>')
+    setCaption(stepCaption(out.steps[i], i, n).replace(/^<span class="k">[^<]*<\/span>/, '<span class="k">Verdict</span>')
       + (s.page ? esc(` · page ${s.page.on_call || s.page.team}`) : ''));
-    pos = out.steps.length; updateStepper();
+    pos = n; updateStepper();
     goHome();
     return;
   }
   // Lit: the call path, plus services on the chain that have open alerts (the
   // evidence). The failing service's other dependencies stay as faint context.
-  const alerting = new Set(cy.nodes('[health]').map(n => n.data('label')));
+  const alerting = new Set(cy.nodes('[health]').map(x => x.data('label')));
   const chain = new Set([...(s.path || []), ...s.related.filter(x => alerting.has(x))]);
   const lit = [...chain].map(svc), pathEdges = s.path ? pathEdgeIds(s.path) : [], roots = [];
   const context = s.related.filter(x => !chain.has(x)).map(svc);
@@ -671,37 +863,35 @@ function showAnswer() {
     ids.forEach(id => keep.merge(cy.getElementById(id)));
     keep.connectedEdges('[?ephemeral]').removeClass('faded').addClass('lit');
   }
-  const impact = s.path ? [...s.path].reverse().join(' ← ') : '';
   const cause = s.root_cause ? `${s.root_cause.service} ${s.root_cause.version} by ${s.root_cause.by}` : '';
-  setCaption(`<span class="k">Answer</span>` + esc([cause && `Cause: ${cause}`, impact && `impact: ${impact}`,
-    s.page && `page ${s.page.on_call || s.page.team}`].filter(Boolean).join(' · ')));
-  pos = out.steps.length; updateStepper();
+  setCaption(`<span class="k">Verdict</span>` + esc([cause && `cause: ${cause}`,
+    s.path && `path: ${s.path.join(' → ')}`, s.page && `page ${s.page.on_call || s.page.team}`].filter(Boolean).join(' · ')));
+  pos = n; updateStepper();
   goHome();
 }
 
 /**
- * Show position `k` of the current answer: 0..n-1 is a tool step, n (or more)
- * the answer view. Used by the stepper buttons, the arrow keys and Play.
+ * Show position `k` of the current answer: 0..n-1 is a tool step, n the verdict
+ * view. Used by the step rows, the ◀ ▶ buttons, the arrow keys and Play.
  */
 function goTo(k) {
   if (!current) return;
   const n = current.out.steps.length;
   k = Math.max(0, Math.min(n, k));
-  if (k === n) showAnswer(); else showStep(current.out, k, current.list);
+  if (k === n) showAnswer(); else showStep(current.out, k);
 }
 
 /** Step back or forward by `d` (the ◀ ▶ buttons and arrow keys); stops Play. */
 function stepBy(d) {
   if (!current) return;
   stopReplay(); closeInspector();
-  $('answerView').setAttribute('aria-pressed', 'false');
   goTo(pos < 0 ? 0 : pos + d);
 }
 
 /**
  * Play: walk through the steps every 1.5 s from the current one, then settle on
- * the answer view. From the answer view (or no step) it starts at step 1.
- * Pressing it while playing pauses on the current step.
+ * the verdict. From the verdict (or no step) it starts at step 1. Pressing it
+ * while playing pauses on the current step.
  */
 function replay() {
   if (!current) return;
@@ -717,15 +907,15 @@ function replay() {
 }
 function stopReplay() { clearInterval(timer); timer = null; updateStepper(); }
 
-/** Sync the stepper with `pos` and `timer`: label, ◀ ▶ enabled, Play or Pause. */
+/** Sync the step controls with `pos` and `timer`: counter, ◀ ▶ enabled, Play or Pause, active row. */
 function updateStepper() {
+  if (!$('pos')) return;
   const n = current ? current.out.steps.length : 0;
-  $('pos').textContent = !current ? 'No answer yet' : pos < 0 ? `${plural(n, 'step')}`
-    : pos >= n ? 'Answer' : `Step ${pos + 1} of ${n}`;
+  $('pos').textContent = !current || pos < 0 ? plural(n, 'step') : pos >= n ? 'Verdict' : `${pos + 1} / ${n}`;
   $('prev').disabled = !current || pos <= 0;
   $('next').disabled = !current || pos >= n;
-  $('replay').disabled = !current;
-  $('replay').textContent = timer ? '⏸ Pause' : '⏵ Play';
+  $('replay').innerHTML = timer ? `${icon('pause', 'sm')}Pause` : `${icon('play', 'sm')}Play`;
+  current?.list.querySelectorAll('li').forEach((li, j) => li.classList.toggle('active', j === pos));
 }
 
 // ============================================================================
@@ -740,7 +930,6 @@ function focusNode(node) {
   hood.edges().addClass('lit');
   node.addClass('focus');
   frame(hood);
-  $('answerView').setAttribute('aria-pressed', 'false');
   openInspector(node);
 }
 
@@ -754,14 +943,14 @@ function openInspector(node) {
     const deploys = node.incomers('node[kind = "deploy"]').map(n => n.data());
     html = `<h3>${esc(d.label)}</h3><div class="sub">${esc(d.tier)} · criticality ${esc(d.criticality)}</div>
       <dl><dt>Owner</dt><dd>${esc(d.team || '—')}</dd><dt>On call</dt><dd>${esc(d.on_call || 'nobody')}</dd></dl>`;
-    html += d.alerts.length
-      ? '<h4>Open alerts</h4>' + d.alerts.map(a => `<div class="alert" style="--c:${SEV[a.severity] || C.muted}">${esc(a.message)}<small>${esc(a.severity)} · ${a.minutes_ago} min ago</small></div>`).join('')
-      : '<h4>Open alerts</h4><div class="links">None in the last hour.</div>';
-    if (deploys.length) html += '<h4>Deploys (1h)</h4>' + deploys.map(x => `<div class="alert" style="--c:${C.deploy}">${esc(x.version)} by ${esc(x.by)}<small>${x.minutes_ago} min ago</small></div>`).join('');
+    html += '<h4>Open alerts</h4>' + (d.alerts.length
+      ? d.alerts.map(a => `<div class="row" style="--c:${SEV[a.severity] || C.faint}">${esc(a.message)}<small>${esc(a.severity)} · ${a.minutes_ago} min ago</small></div>`).join('')
+      : '<div class="links">None in the last hour.</div>');
+    if (deploys.length) html += '<h4>Deploys, last hour</h4>' + deploys.map(x => `<div class="row" style="--c:${C.accent}">${esc(x.version)} by ${esc(x.by)}<small>${x.minutes_ago} min ago</small></div>`).join('');
     html += `<h4>Neighbours</h4><div class="links">Calls: <span>${esc(calls.join(', ') || 'nothing')}</span></div>
       <div class="links">Called by: <span>${esc(callers.join(', ') || 'nobody')}</span></div>`;
-    html += `<div class="ask"><button data-q="${esc(d.label)} is failing. What broke?">🔥 Why is ${esc(d.label)} failing?</button>
-      <button data-q="What breaks if ${esc(d.label)} goes down?">💥 What breaks if it goes down?</button></div>`;
+    html += `<div class="actions"><button data-q="${esc(d.label)} is failing. What broke?">${icon('zap', 'sm')}Why is ${esc(d.label)} failing?</button>
+      <button data-q="What breaks if ${esc(d.label)} goes down?">${icon('network', 'sm')}What breaks if it goes down?</button></div>`;
   } else if (d.kind === 'deploy') {
     html = `<h3>${esc(d.service)} ${esc(d.version)}</h3><div class="sub">Deploy</div>
       <dl><dt>By</dt><dd>${esc(d.by)}</dd><dt>When</dt><dd>${d.minutes_ago} min ago</dd></dl>`;
@@ -778,7 +967,10 @@ function closeInspector() { $('inspector').classList.remove('open'); }
 // Rendering the answer
 // ============================================================================
 
-/** Wrap known service names in hoverable spans (input is already HTML-escaped). */
+/** A clickable service-name pill; `cls` adds "bad" (failing) or "dim" (unrelated). */
+const pill = (name, cls = '') => `<span class="svc ${cls}" data-s="${esc(name)}">${esc(name)}</span>`;
+
+/** Wrap known service names in pills (input is already HTML-escaped). */
 function linkServices(html) {
   if (!services.length) return html;
   const re = new RegExp(`(?<![\\w-])(${services.map(s => s.replace(/[-]/g, '\\-')).join('|')})(?![\\w-])`, 'g');
@@ -800,96 +992,192 @@ function renderAnswer(text) {
   return html + (inList ? '</ul>' : '');
 }
 
-/** One line per tool step: name, arguments, row count, time. */
-function stepLine(st) {
-  const r = st.result || {}, args = Object.values(st.args || {}).join(', ');
-  const rows = r.error ? 'error'
-    : st.tool === 'recent_changes' ? `${r.deploys.length} deploys, ${r.alerts.length} alerts`
-    : st.tool === 'dependencies' ? `${r.depends_on.length} services`
-    : st.tool === 'blast_radius' ? `${r.affected.length} services`
-    : st.tool === 'dependency_path' ? (r.path ? `${r.path.length - 1} hops` : 'no path')
-    : st.tool === 'critical_services' ? `${r.ranking.length} ranked`
-    : st.tool === 'who_to_page' ? (r.on_call || 'nobody on call') : '';
-  return `<span class="tool">${esc(st.tool)}(${esc(args)})</span><span class="meta">${esc(rows)} · ${st.ms} ms</span>`;
+/** The answer text without the rules header line, for display. */
+function answerText(out) {
+  return out.provider === 'rules' ? out.answer.replace(/^Diagnosis by rules[^\n]*\n/, '') : out.answer;
+}
+
+/** First sentence-ish line of the answer, without Markdown or section labels (for the verdict headline). */
+function firstLine(out) {
+  const line = answerText(out).split('\n').map(l => l.replace(/[*`#]/g, '').replace(/^[-•]\s+/, '')
+    .replace(/^(Root cause|Evidence|Unrelated|Page)\s*:\s*/i, '').trim()).find(Boolean) || 'No answer.';
+  return line.length > 220 ? line.slice(0, 217) + '…' : line;
+}
+
+/** The latest successful result of tool `name`, or undefined. */
+const lastResult = (out, name) => [...out.steps].reverse().find(st => st.tool === name && !st.result?.error)?.result;
+
+/**
+ * Verdict card, built from the structured summary rather than the model text:
+ * a headline (root cause, blast radius, ranking, or the answer's first line),
+ * the failure path, evidence alerts, unrelated services, and who to page.
+ */
+function verdictHtml(out) {
+  const s = out.summary;
+  let kind, head, sub = '', rows = '';
+  const br = lastResult(out, 'blast_radius'), crit = lastResult(out, 'critical_services');
+  if (s.root_cause) {
+    const rc = s.root_cause;
+    const ev = out.timeline.find(e => e.kind === 'deploy' && e.service === rc.service && e.text.includes(rc.version));
+    kind = `<div class="kind cause">${icon('commit', 'sm')}Root cause</div>`;
+    head = `<div class="headline">${esc(rc.service)} <span class="ver">${esc(rc.version)}</span></div>`;
+    sub = `Deployed by ${esc(rc.by)}${ev ? ` · ${ev.minutes_ago} min ago` : ''}`;
+  } else if (br) {
+    kind = `<div class="kind">${icon('network', 'sm')}Blast radius</div>`;
+    head = `<div class="headline">${plural(br.affected.length, 'service')} break</div>`;
+    sub = `if ${pill(br.service, 'bad')} goes down`;
+    const by = [...br.affected].sort((a, b) => a.hops - b.hops);
+    rows += `<div class="vrow"><div class="section-label">Affected, nearest first</div><div class="chain">`
+      + by.slice(0, 10).map(d => pill(d.service)).join('')
+      + (by.length > 10 ? `<span class="tag">+${by.length - 10} more</span>` : '') + `</div></div>`;
+  } else if (crit) {
+    kind = `<div class="kind">${icon('target', 'sm')}Most critical</div>`;
+    head = `<div class="headline">${esc(crit.ranking[0]?.service || '—')}</div>`;
+    sub = `Ranked by ${esc(crit.metric)}: the services most paths run through`;
+    rows += `<div class="vrow"><div class="section-label">Ranking</div><div class="evidence">`
+      + crit.ranking.slice(0, 5).map((x, k) => `<div class="ev"><span class="ago num">#${k + 1}</span>${pill(x.service)}<span class="msg"></span><span class="ago num">${esc(x.score)}</span></div>`).join('')
+      + `</div></div>`;
+  } else {
+    kind = `<div class="kind">${icon('help', 'sm')}${out.check.by_rules || out.provider === 'rules' ? 'Diagnosis by rules' : 'Answer'}</div>`;
+    head = `<div class="headline text">${linkServices(esc(firstLine(out)))}</div>`;
+  }
+  if (s.path && s.path.length > 1) {
+    rows += `<div class="vrow"><div class="section-label">Failure path · A → B means A calls B</div><div class="chain">`
+      + s.path.map((x, k) => pill(x, k === s.path.length - 1 && s.root_cause ? 'bad' : '')).join(`<span class="arrow">${icon('arrow', 'sm')}</span>`)
+      + `</div></div>`;
+  }
+  const ev = out.timeline.filter(e => e.kind === 'alert' && e.related)
+    .sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9) || a.minutes_ago - b.minutes_ago);
+  if (ev.length && !br && !crit) {
+    rows += `<div class="vrow"><div class="section-label">Evidence</div><div class="evidence">`
+      + ev.slice(0, 4).map(e => `<div class="ev"><span class="dot" style="background:${SEV[e.severity] || C.faint}"></span>`
+        + `${pill(e.service)}<span class="msg">${esc(e.text)}</span><span class="ago">${e.minutes_ago}m</span></div>`).join('')
+      + `</div></div>`;
+  }
+  if (s.unrelated.length) {
+    rows += `<div class="vrow"><div class="section-label">Not related</div><div class="chain">${s.unrelated.map(x => pill(x, 'dim')).join('')}</div></div>`;
+  }
+  if (s.page) {
+    rows += s.page.on_call
+      ? `<div class="page"><span class="bell">${icon('bell', 'sm')}</span><div><b>Page ${esc(s.page.on_call)}</b><small>${esc(s.page.team)} team, on call for ${esc(s.page.service)}</small></div></div>`
+      : `<div class="page none"><span class="bell">${icon('bell', 'sm')}</span><div><b>Nobody on call</b><small>${esc(s.page.team)} team owns ${esc(s.page.service)}</small></div></div>`;
+  }
+  return `<div class="verdict"><div class="top">${kind}${head}${sub ? `<div class="subline">${sub}</div>` : ''}</div>${rows}</div>`;
 }
 
 /**
- * "Answered by" row: which LLM wrote the answer, through which provider, with
- * its LLM calls and tokens; then the models tried before it and why each was
- * skipped. For a rules answer it says no model wrote it.
+ * Model badge: which LLM wrote the answer, with calls, tokens and time. The
+ * models tried before it (and why each was skipped) are in its dropdown, so a
+ * fallback does not dominate the page.
  */
-function answeredBy(out) {
+function modelBadge(out) {
   const tok = out.tokens ? out.tokens.prompt + out.tokens.completion : 0;
-  const row = out.provider === 'rules'
-    ? `<div class="by rules"><span>⚙️</span><span class="who">Diagnosis by rules</span><span class="via">no LLM wrote this answer</span></div>`
-    : `<div class="by" title="${esc(out.provider)} · ${esc(out.model)}"><span>🤖</span>`
-      + `<span class="who">${esc(MODEL_NAMES[out.model] || out.model)}</span>`
-      + `<span class="via">via ${esc(PROVIDER_NAMES[out.provider] || out.provider)}</span>`
-      + `<span class="stats">${plural(out.llm_calls, 'LLM call')} · ${tok.toLocaleString()} tokens</span></div>`;
-  if (!out.fallbacks.length) return row;
-  const hops = out.fallbacks.map(f => {
+  const name = out.provider === 'rules' ? 'Rules diagnosis' : (MODEL_NAMES[out.model] || out.model);
+  const stats = out.provider === 'rules' ? 'no LLM' : `${plural(out.llm_calls, 'call')} · ${(tok / 1000).toFixed(1)}k tokens`;
+  const tried = out.fallbacks.length ? ` · ${out.fallbacks.length} skipped` : '';
+  const items = out.fallbacks.map(f => {
     const cls = f.error.split(':')[0];
-    return `<span class="hop fail" title="${esc(f.error)}">${esc(MODEL_NAMES[f.model] || f.model || f.provider)}</span>`
-      + `<span>${esc(WHY[cls] || cls)} →</span>`;
-  }).join('');
-  const last = out.provider === 'rules' ? 'rules' : (MODEL_NAMES[out.model] || out.model);
-  return row + `<div class="trail">Tried first: ${hops}<span class="hop win">${esc(last)}</span></div>`;
+    return `<li title="${esc(f.error)}">${esc(MODEL_NAMES[f.model] || f.model || f.provider)} <span class="why">· ${esc(WHY[cls] || cls)}</span></li>`;
+  }).join('') + `<li class="win">${esc(name)}${out.provider === 'rules' ? '' : ` <span class="why">via ${esc(PROVIDER_NAMES[out.provider] || out.provider)}</span>`}</li>`;
+  return `<details class="model"><summary><span class="tag">${icon(out.provider === 'rules' ? 'list' : 'cpu', 'sm')}`
+    + `<span class="who">${esc(name)}</span><span class="num">${stats} · ${out.seconds}s${tried}</span></span></summary>`
+    + `<div class="menu">Models tried, in order:<ol>${items}</ol></div></details>`;
 }
 
-/** Badges: how long, and whether the answer passed the check. Who answered is in answeredBy(). */
-function badges(out) {
-  const b = [];
-  b.push(`<span class="badge">${out.seconds}s · ${plural(out.steps.length, 'tool call')}</span>`);
+/** Whether the answer passed the check against the graph. */
+function checkTag(out) {
   const ck = out.check;
-  if (ck.by_rules && out.provider !== 'rules') b.push('<span class="badge warn">Model answer failed the check twice</span>');
-  else if (ck.retried) b.push('<span class="badge warn">Checked · fixed on retry</span>');
-  else if (out.provider !== 'rules') b.push('<span class="badge ok">✓ Checked against the graph</span>');
-  return `<div class="badges">${b.join('')}</div>`;
+  if (out.provider === 'rules') return `<span class="tag">${icon('list', 'sm')}Built from tool rows</span>`;
+  if (ck.by_rules) return `<span class="tag warn">${icon('alert', 'sm')}Model failed the check · rules answer</span>`;
+  if (ck.retried) return `<span class="tag warn">${icon('checkCircle', 'sm')}Checked · fixed on retry</span>`;
+  return `<span class="tag ok">${icon('checkCircle', 'sm')}Checked against the graph</span>`;
+}
+
+/** Step rows, plus a last "Verdict" row for the answer view. */
+function stepsHtml(out) {
+  return out.steps.map((st, i) => {
+    const args = Object.values(st.args || {}).join(', '), err = st.result?.error;
+    return `<li data-i="${i}" class="${err ? 'err' : ''}"><span class="st">${icon(err ? 'xCircle' : 'checkCircle', 'sm')}</span>`
+      + `<span class="tool">${esc(st.tool)}<span class="args">(${esc(args)})</span></span>`
+      + `<span class="meta num">${esc(stepResult(st))} · ${st.ms} ms</span></li>`;
+  }).join('') + `<li data-i="${out.steps.length}" class="final"><span class="st">${icon('flag', 'sm')}</span>`
+    + `<span class="tool">verdict</span><span class="meta num">${out.seconds}s total</span></li>`;
 }
 
 /** Recent deploys and alerts, oldest first; ones off the failure chain are faded. */
 function timelineHtml(events) {
   if (!events.length) return '';
   const items = events.map(e => {
-    const c = e.kind === 'deploy' ? 'var(--deploy)' : (SEV[e.severity] || 'var(--muted)');
-    const what = e.kind === 'deploy' ? linkServices(esc(e.text)) : `${linkServices(esc(e.service))}: ${esc(e.text)}`;
-    return `<li class="${e.related ? '' : 'other'}" style="--c:${c}"><span class="when">−${String(e.minutes_ago).padStart(2, ' ')}m</span>${what}</li>`;
+    const c = e.kind === 'deploy' ? 'var(--accent)' : (SEV[e.severity] || 'var(--faint)');
+    const what = e.kind === 'deploy' ? linkServices(esc(e.text)) : `${pill(e.service)} ${esc(e.text)}`;
+    return `<li class="${e.related ? '' : 'other'}" style="--c:${c}"><span class="when num">−${e.minutes_ago}m</span><span class="what">${what}</span></li>`;
   }).join('');
-  return `<h4>Timeline · last hour</h4><ul class="timeline">${items}</ul>`;
+  return `<div class="block"><div class="section-label">Timeline · last hour</div><ul class="timeline">${items}</ul></div>`;
 }
 
-/** Build the agent's message card for one /api/ask result and start the replay. */
-function renderResult(card, out) {
-  const s = out.summary;
-  const page = s.page ? `<div class="page">📟 Page <b>${esc(s.page.on_call || 'nobody on call')}</b> · ${esc(s.page.team)} on call</div>` : '';
-  const steps = out.steps.length ? `<h4>Graph queries · click one to see it</h4><ol class="steps">${out.steps.map((st, i) => `<li data-i="${i}">${stepLine(st)}</li>`).join('')}</ol>` : '';
+/** Collapsed sections: the model's full text and the Cypher that ran. */
+function foldsHtml(out, openText) {
   const cypher = out.queries.length
-    ? `<details><summary>Show the ${plural(out.queries.length, 'Cypher query', 'Cypher queries')} that ran</summary>`
-      + `<div class="qhead"><span>Values are filled in, so each one runs as pasted into FalkorDB Browser.</span>`
-      + `<button class="copy" type="button" data-copy="all">Copy all</button></div>`
-      + out.queries.map((q, i) => `<div class="q"><pre>${esc(q)}</pre><button class="copy" type="button" data-copy="${i}">Copy</button></div>`).join('')
-      + `</details>` : '';
-  card.className = 'msg-agent';
-  // The rules answer starts with its own "Diagnosis by rules" line; the badge already says so.
-  const text = out.provider === 'rules' ? out.answer.replace(/^Diagnosis by rules[^\n]*\n/, '') : out.answer;
-  card.innerHTML = answeredBy(out) + badges(out) + `<div class="answer">${renderAnswer(text)}</div>` + page
-    + steps + timelineHtml(out.timeline) + cypher;
-  const list = card.querySelector('.steps') || document.createElement('ol');
-  list.querySelectorAll('li').forEach(li => li.onclick = () => {
-    stopReplay(); closeInspector(); current = { out, list };
-    $('answerView').setAttribute('aria-pressed', 'false'); goTo(+li.dataset.i);
-  });
-  card.querySelectorAll('.svc').forEach(el => {
-    el.onmouseenter = () => { const n = cy.getElementById(svc(el.dataset.s)); if (n.length) { stopReplay(); n.addClass('focus'); } };
-    el.onmouseleave = () => cy.getElementById(svc(el.dataset.s)).removeClass('focus');
-    el.onclick = () => { const n = cy.getElementById(svc(el.dataset.s)); if (n.length) focusNode(n); };
-  });
-  card.querySelectorAll('[data-copy]').forEach(b => b.onclick = () =>
+    ? `<details class="fold"><summary><span class="chev">${icon('chev', 'sm')}</span>${plural(out.queries.length, 'Cypher query', 'Cypher queries')} that ran</summary><div class="body">`
+      + `<div class="qhead"><span>Values are filled in, so each runs as pasted into FalkorDB Browser.</span>`
+      + `<button class="copy" type="button" data-copy="all">${icon('copy', 'sm')}Copy all</button></div>`
+      + out.queries.map((q, i) => `<div class="qbox"><pre>${esc(q)}</pre><button class="copy" type="button" data-copy="${i}">${icon('copy', 'sm')}Copy</button></div>`).join('')
+      + `</div></details>` : '';
+  const who = out.provider === 'rules' ? 'Rules diagnosis' : 'Full answer from the model';
+  return `<details class="fold"${openText ? ' open' : ''}><summary><span class="chev">${icon('chev', 'sm')}</span>${who}</summary>`
+    + `<div class="body answer">${renderAnswer(answerText(out))}</div></details>` + cypher;
+}
+
+/** Question line with the history menu (earlier questions in this session). */
+function questionHtml(q) {
+  const earlier = history.length > 1
+    ? `<details class="hist"><summary class="ghost">${icon('history', 'sm')}${history.length}</summary><div class="menu">`
+      + history.map((h, i) => `<button type="button" data-h="${i}" class="${h.q === q ? 'cur' : ''}">${esc(h.q)}</button>`).reverse().join('')
+      + `</div></details>` : '';
+  return `<div class="qline"><div class="q">${esc(q)}</div>${earlier}</div>`;
+}
+
+/** Show one answered question in the panel and start playing its steps. */
+function renderResult(entry) {
+  const { q, out } = entry, s = out.summary;
+  const structured = s.root_cause || lastResult(out, 'blast_radius') || lastResult(out, 'critical_services');
+  const inv = $('inv');
+  inv.innerHTML = questionHtml(q) + verdictHtml(out)
+    + `<div class="metarow">${modelBadge(out)}${checkTag(out)}</div>`
+    + `<div class="block"><div class="section-label">Investigation`
+    + `<div class="scrub"><button class="ghost" id="prev" type="button" title="Previous step (← key)" aria-label="Previous step">${icon('left', 'sm')}</button>`
+    + `<span class="pos num" id="pos" aria-live="polite"></span>`
+    + `<button class="ghost" id="next" type="button" title="Next step (→ key)" aria-label="Next step">${icon('right', 'sm')}</button>`
+    + `<button class="ghost" id="replay" type="button" title="Play the steps"></button></div></div>`
+    + `<ol class="steps" id="steps">${stepsHtml(out)}</ol></div>`
+    + timelineHtml(out.timeline) + foldsHtml(out, !structured);
+  const list = $('steps');
+  list.querySelectorAll('li').forEach(li => li.onclick = () => { stopReplay(); closeInspector(); current = { out, list }; goTo(+li.dataset.i); });
+  $('prev').onclick = () => stepBy(-1);
+  $('next').onclick = () => stepBy(1);
+  $('replay').onclick = () => { closeInspector(); replay(); };
+  inv.querySelectorAll('[data-copy]').forEach(b => b.onclick = () =>
     copyText(b.dataset.copy === 'all' ? out.queries.join(';\n\n') : out.queries[+b.dataset.copy], b));
+  inv.querySelectorAll('[data-h]').forEach(b => b.onclick = () => renderResult(history[+b.dataset.h]));
   stopReplay();
   current = { out, list }; pos = -1;
-  $('answerView').disabled = false;
+  $('panel').scrollTop = 0;
   replay();
+}
+
+/** Placeholder while the agent works: the question, a skeleton verdict and an elapsed timer. */
+function renderLoading(q) {
+  $('intro')?.remove();
+  const inv = $('inv');
+  inv.hidden = false;
+  inv.innerHTML = questionHtml(q)
+    + `<div class="verdict"><div class="top"><div class="skel" style="width:30%;margin-bottom:10px"></div>`
+    + `<div class="skel" style="width:70%;height:18px;margin-bottom:8px"></div><div class="skel" style="width:50%"></div></div></div>`
+    + `<div class="block" style="margin-top:18px"><div class="section-label">Investigation</div><ol class="steps loading">`
+    + `<li><span class="spinner"></span><span>Asking the model and querying the graph…</span><span class="meta num" id="elapsed">0s</span></li></ol></div>`;
+  const t0 = Date.now();
+  const tick = setInterval(() => { const el = $('elapsed'); if (el) el.textContent = `${Math.round((Date.now() - t0) / 1000)}s`; else clearInterval(tick); }, 500);
+  return () => clearInterval(tick);
 }
 
 /** Copy `text` to the clipboard and flash "Copied" on `btn`. Falls back to execCommand off HTTPS. */
@@ -900,9 +1188,9 @@ async function copyText(text, btn) {
     const t = Object.assign(document.createElement('textarea'), { value: text });
     document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove();
   }
-  const was = btn.textContent;
-  btn.textContent = 'Copied ✓'; btn.classList.add('done');
-  setTimeout(() => { btn.textContent = was; btn.classList.remove('done'); }, 1400);
+  const was = btn.innerHTML;
+  btn.innerHTML = `${icon('check', 'sm')}Copied`; btn.classList.add('done');
+  setTimeout(() => { btn.innerHTML = was; btn.classList.remove('done'); }, 1400);
 }
 
 // ============================================================================
@@ -912,21 +1200,16 @@ async function copyText(text, btn) {
 /** Send one question to /api/ask, show a placeholder, then the answer (or the error). */
 async function ask(q) {
   q = (q || '').trim();
-  if (!q || $('send').disabled) return;
+  if (!q || busy) return;
   if (q.length < 3) {   // the API rejects these (422); say why instead
-    $('question').placeholder = 'Ask a full question, e.g. "checkoutservice is throwing 5xx errors, what broke?"';
+    $('hint').textContent = 'Ask a full question, e.g. "checkoutservice is throwing 5xx errors, what broke?"';
     $('question').value = ''; $('question').focus();
     return;
   }
-  $('intro')?.remove(); closeInspector();
-  const msgs = $('messages');
-  msgs.insertAdjacentHTML('beforeend', `<div class="msg-user">${esc(q)}</div>`);
-  const asked = msgs.lastElementChild;
-  const card = document.createElement('div');
-  card.className = 'msg-agent thinking';
-  card.innerHTML = '<span class="spinner"></span>Investigating the graph…';
-  msgs.appendChild(card); msgs.scrollTop = msgs.scrollHeight;
-  $('send').disabled = true; $('question').value = '';
+  $('hint').textContent = '';
+  closeInspector(); stopReplay();
+  busy = true; $('send').disabled = true; $('question').value = '';
+  const done = renderLoading(q);
   try {
     const r = await fetch('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                          body: JSON.stringify({ question: q }) });
@@ -934,14 +1217,16 @@ async function ask(q) {
     if (!r.ok) throw new Error(typeof out.detail === 'string' ? out.detail
       : Array.isArray(out.detail) ? out.detail.map(d => d.msg).join('; ') : `HTTP ${r.status}`);
     await loadGraph();   // the graph may have been re-seeded; redraw before lighting it up
-    renderResult(card, out);
+    const entry = { q, out };
+    history.push(entry);
+    done();
+    renderResult(entry);
   } catch (e) {
-    card.className = 'msg-agent error';
-    card.textContent = `Something went wrong: ${e.message}`;
+    done();
+    $('inv').innerHTML = questionHtml(q) + `<div class="error-card">${icon('alert', 'sm')} Something went wrong: ${esc(e.message)}</div>`;
     reportError(`ask failed: ${e.message}`, q, e.stack);
   } finally {
-    $('send').disabled = false;
-    asked.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    busy = false; $('send').disabled = false;
   }
 }
 
@@ -949,13 +1234,25 @@ async function ask(q) {
 // Wiring
 // ============================================================================
 $('form').onsubmit = e => { e.preventDefault(); ask($('question').value); };
-document.querySelectorAll('.chips button').forEach(b => b.onclick = () => ask(b.dataset.q));
-$('replay').onclick = () => { closeInspector(); replay(); };
-$('prev').onclick = () => stepBy(-1);
-$('next').onclick = () => stepBy(1);
-$('answerView').onclick = () => { closeInspector(); showAnswer(); };
+document.querySelectorAll('.example').forEach(b => b.onclick = () => ask(b.dataset.q));
+// Service pills anywhere in the panel: hover marks the node, click focuses it.
+$('panel').addEventListener('mouseover', e => {
+  const p = e.target.closest('.svc'); if (!p || !cy) return;
+  const n = cy.getElementById(svc(p.dataset.s)); if (n.length) { stopReplay(); n.addClass('focus'); }
+});
+$('panel').addEventListener('mouseout', e => {
+  const p = e.target.closest('.svc'); if (p && cy) cy.getElementById(svc(p.dataset.s)).removeClass('focus');
+});
+$('panel').addEventListener('click', e => {
+  const p = e.target.closest('.svc'); if (!p || !cy) return;
+  const n = cy.getElementById(svc(p.dataset.s)); if (n.length) { stopReplay(); focusNode(n); }
+});
 $('showAll').onclick = () => { closeInspector(); showAll(); goHome(); };
 $('closeInspector').onclick = closeInspector;
+$('legendBtn').onclick = () => {
+  const open = $('legend').hidden;
+  $('legend').hidden = !open; $('legendBtn').setAttribute('aria-expanded', String(open));
+};
 $('zoomIn').onclick = () => cy.zoom({ level: cy.zoom() * 1.25, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
 $('zoomOut').onclick = () => cy.zoom({ level: cy.zoom() / 1.25, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
 $('fit').onclick = goHome;
@@ -976,7 +1273,7 @@ window.addEventListener('resize', () => { if (!cy) return; cy.resize(); setHome(
 const startQuestion = new URLSearchParams(location.search).get('q');
 loadGraph()
   .then(() => startQuestion && ask(startQuestion))
-  .catch(e => { reportError(`graph load failed: ${e.message}`, '', e.stack); if ($('empty')) $('empty').textContent = `Graph not reachable: ${e.message}`; setStatus(false, `<span>${esc(e.message)}</span>`); });
+  .catch(e => { reportError(`graph load failed: ${e.message}`, '', e.stack); if ($('empty')) $('empty').textContent = `Graph not reachable: ${e.message}`; setStatus(false, `<span class="chip">${esc(e.message)}</span>`); });
 </script>
 </body>
 </html>
