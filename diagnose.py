@@ -186,11 +186,16 @@ def needs_no_model(g, question):
       * nothing from the graph in it ("hello there", "who is akshit?");
       * the only service or team named is not in the graph ("billing-service
         is down", "who is on call for SRE?"). Live test, Oct 16: StepFun said
-        billing-service was missing, then diagnosed paymentservice instead.
+        billing-service was missing, then diagnosed paymentservice instead;
+      * "who is <person>?" No tool returns a person's team, so models guessed:
+        live Oct 16, StepFun said Daniel Okafor was not in the graph, and
+        called Ravi Kumar's orders-db deploy "Payments-related".
     agent.investigate() answers these with the rules straight away.
     """
     q = question.lower().replace("\u2019", "'")
     if _WRITE.search(q) or _off_topic_question(g, question):
+        return True
+    if _WHO_IS.search(q) and _named_person(g, q) and not failing_services(g, question):
         return True
     if failing_services(g, question) or aliased_services(g, question):
         return False
@@ -210,6 +215,7 @@ def _off_topic_question(g, question):
                 or _named_team(g, q) or unknown_services(g, question))
 
 
+_WHO_IS = re.compile(r"^\W*(?:who(?:'s| is)|tell me about)\b")
 _ROOT_LINE = re.compile(r"Root cause: (\S+) (\S+), deployed by (.+?) \d+ min ago")
 _DEPLOY_TO = re.compile(r"\bdeploy(?:ed|ment)?\s+(?:to|of|on|for)\s+([a-z][\w-]*)")
 

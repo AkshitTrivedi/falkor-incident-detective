@@ -211,3 +211,17 @@ def test_several_services_none_explained_get_one_block_each(g):
     assert "Page: Checkout team owns cartservice, on call Omar Haddad." in out["answer"]
     assert "Page: Storefront team owns adservice, on call Maya Chen." in out["answer"]
     assert [s["tool"] for s in out["steps"]].count("recent_changes") == 1
+
+
+@pytest.mark.parametrize("question,rules", [
+    ("Who is Daniel Okafor?", True),
+    ("who is priya?", True),
+    ("who's omar", True),
+    ("who is akshit?", True),              # off-topic: no such person
+    ("Who is on call for payments?", False),
+    ("Did Priya Nair deploy anything in the last hour?", False),
+    ("checkoutservice is throwing 5xx, what broke?", False),
+])
+def test_who_is_person_goes_to_rules(g, question, rules):
+    """Live Oct 16: models have no person tool and guessed (P1, P2)."""
+    assert diagnose.needs_no_model(g, question) == rules
