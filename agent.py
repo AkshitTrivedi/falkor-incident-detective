@@ -109,6 +109,7 @@ SYSTEM_PROMPT = """You are Incident Detective, an on-call assistant for a micros
 You investigate incidents ONLY with the provided tools, which query a graph of services,
 dependencies, deploys, alerts, teams and on-call people. Never invent services, people, teams,
 versions or numbers: every name and figure in your answer must appear in a tool result.
+Write for the on-call engineer: say "the graph", never "the tool results above".
 If the question names a service, person, team or version the graph does not have, start your
 answer with a sentence that names it and says it is not in the graph ("There is no SRE team in
 the graph."). If no tool can answer (for example CPU or memory metrics), say so.
@@ -600,6 +601,7 @@ def _check(question, answer, steps, messages, g, client, model, tokens, deadline
         and the rules' tool steps and path ([] and None if they did not run).
     """
     vocab = verify.graph_vocabulary(g)
+    answer = answer.strip()  # StepFun sometimes starts with blank lines
     problems = verify.check_answer(answer, steps, question, vocab)
     check = {"problems": problems, "retried": False, "by_rules": False}
     if not problems:

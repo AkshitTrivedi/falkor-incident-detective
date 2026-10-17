@@ -594,6 +594,13 @@ def check_answer(answer, steps, question, vocab):
               or re.search(r"→|->", a))
     if not steps and states:
         problems.append("no tool was called, so nothing in the answer comes from the graph")
+    # Live test, Oct 16 (StepFun): an empty reply, or "I'll check the on-call
+    # information", with no tool call. It states nothing false but answers
+    # nothing either. A question with a made-up name is graded by rules 11-14.
+    elif (not steps and not any(p in plain for p in NOT_FOUND)
+          and not unknown_names(question, vocab)):
+        problems.append("no tool was called and the answer neither answers nor says "
+                        "what is missing from the graph")
 
     # Rule 17: a root-cause deploy must be on the dependency chain (either
     # direction) of a failing service the question names. Live test, Oct 16:
@@ -676,7 +683,8 @@ def _denied(text, name, kind):
         rf"\bthere(?: is|'s) no (?:{noun} (?:named|called) )?{n}{suffix} in the graph",
         rf"(?<![\w-]){n}{suffix} (?:is not|isn't|was not|wasn't) (?:in|part of) the graph",
         rf"(?<![\w-]){n}{suffix} (?:does not|doesn't) exist",
-        rf"\bno {noun} (?:named|called) {n}(?![\w-])",
+        rf"\bno (?:record of )?(?:an? )?{noun} (?:named|called) {n}(?![\w-])",
+        rf"(?<![\w-]){n} (?:is not|isn't) (?:an? )?(?:known )?{noun}\b",
     )
     return any(re.search(p, text) for p in patterns)
 

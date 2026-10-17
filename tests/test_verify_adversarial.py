@@ -223,6 +223,11 @@ def test_real_people_and_teams_in_the_question_need_no_denial():
 
 # Rule 15: (question, answer that calls a real name missing). Live test, Oct 16.
 FALSE_DENIALS = [
+    # P2, live Oct 16 (StepFun).
+    ("Who is Daniel Okafor?",
+     "I can't answer that. There is no record of a person named Daniel Okafor anywhere "
+     "in the graph, so I can't tell you who they are."),
+    ("Who owns adservice?", "adservice is not a known service."),
     ("Did Priya Nair deploy anything in the last hour?",
      "There is no Priya Nair in the graph. The only deploy was fraud-check v3.1.0 "
      "by Daniel Okafor, 14 minutes ago."),
@@ -360,3 +365,11 @@ def test_negated_dependency_claim_is_not_flagged():
               "depend on adservice.")
     problems = verify.check_answer(answer, STEPS, "Is the adservice alert related?", REACH)
     assert not any("in the graph it does not" in p for p in problems)
+
+
+@pytest.mark.parametrize("answer", ["(Empty message, no tool call)",
+                                    "<answer>\nI'll check the on-call information for the payments service.\n</answer>"])
+def test_empty_reply_with_no_tool_is_flagged(answer):
+    """Rule 16, live Oct 16 (StepFun): replies that answer nothing."""
+    assert any("no tool was called" in p
+               for p in verify.check_answer(answer, [], "Is Omar on call for payments?", VOCAB))
