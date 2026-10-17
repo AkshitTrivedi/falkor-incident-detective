@@ -753,9 +753,12 @@ let staged = false;
 function answerServices(out) {
   const names = new Set(), s = out.summary;
   const add = x => { if (x) names.add(x); };
-  out.steps.forEach(({ result: r }) => {
+  out.steps.forEach(({ tool, result: r }) => {
     if (!r || r.error) return;
     add(r.service);
+    // "No path" still names the two services asked about; a team-only page names the team.
+    if (tool === 'dependency_path' && !r.path) { add(r.params?.a); add(r.params?.b); }
+    if (r.team && !r.service) cy.nodes('[kind = "service"]').filter(n => n.data('team') === r.team).forEach(n => add(n.data('label')));
     (r.depends_on || []).forEach(d => add(d.service));
     (r.affected || []).forEach(d => add(d.service));
     (r.ranking || []).forEach(d => add(d.service));
@@ -779,7 +782,7 @@ function stage(out) {
   cy.elements().addClass('offstage');
   keep.union(deploys).union(keep.edgesWith(keep)).union(deploys.connectedEdges()).removeClass('offstage');
   // Wider gaps than the full layout: steps add a second label line ("#1 · 92.8").
-  keep.union(keep.edgesWith(keep)).layout({ name: 'dagre', rankDir: 'LR', nodeSep: 36, rankSep: 60,
+  keep.union(keep.edgesWith(keep)).layout({ name: 'dagre', rankDir: 'LR', nodeSep: 48, rankSep: 60,
     edgeSep: 8, ranker: 'network-simplex', animate: false, fit: false }).run();
   pinDeploys(deploys);
   staged = true;
