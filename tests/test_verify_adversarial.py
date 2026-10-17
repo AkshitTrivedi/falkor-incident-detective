@@ -169,3 +169,84 @@ def test_unknown_version_from_question_must_be_denied():
     assert verify.check_answer(honest, STEPS, question, VOCAB) == []
     honest2 = "No — the only recent deploy is fraud-check v3.1.0.\n" + GOOD
     assert verify.check_answer(honest2, STEPS, question, VOCAB) == []
+
+
+def test_caller_called_unrelated_is_flagged():
+    """Rule 5 covers callers too: after blast_radius(fraud-check) returned
+    paymentservice, calling its alert unrelated is wrong."""
+    question = "If we roll back fraud-check, which alerts should clear?"
+    steps = STEPS[:1] + [{"tool": "blast_radius", "args": {}, "result": {
+        "service": "fraud-check", "affected": [{"service": "paymentservice", "hops": 1},
+                                               {"service": "checkoutservice", "hops": 2}]}}]
+    bad = "Clears: payments-db CPU 98%.\nUnrelated: paymentservice p99 latency 4.2s, adservice."
+    good = "Clears: payments-db CPU 98%, paymentservice p99 latency 4.2s.\nUnrelated: adservice."
+    assert any("paymentservice" in p for p in verify.check_answer(bad, steps, question, VOCAB))
+    assert verify.check_answer(good, steps, question, VOCAB) == []
+
+
+# Live probe 2, Oct 17: Gemini answers that dodged a made-up name from the
+# question and still passed, because some other "not in the ..." phrase counted
+# as the denial. Each must now be flagged, and an honest reply must pass.
+DODGES = [
+    ("Did the paymentservice v2.0.0 deploy cause the latency?",
+     "Root cause: The fraud-check v3.1.0 deploy by Daniel Okafor caused the latency.\n"
+     "Unrelated: The adservice alert is unrelated as it is not in the dependency path "
+     "of paymentservice.\nPage: Payments team, on-call person Priya Nair.",
+     "paymentservice v2.0.0 is not in the graph; the only deploy is fraud-check v3.1.0.\n"
+     + GOOD),
+    ("Is Sarah Jenkins on call for payments right now?",
+     'The service "payments" is not in the graph. The available service related to '
+     'payments is "paymentservice".',
+     "No. There is no person named Sarah Jenkins in the graph. "
+     "Page: Payments team, on-call Priya Nair."),
+    ("Should I page the SRE team for the checkout errors?",
+     GOOD,
+     "There is no SRE team in the graph.\n" + GOOD),
+    ("billing-service is down, who do I page?",
+     GOOD,
+     "billing-service is not a service in the graph."),
+]
+
+
+@pytest.mark.parametrize("question,dodge,honest", DODGES, ids=lambda x: x[:30])
+def test_made_up_names_from_the_question_must_be_denied(question, dodge, honest):
+    """Rules 11-14: the denial has to name the made-up thing."""
+    assert verify.check_answer(dodge, STEPS, question, VOCAB)
+    assert verify.check_answer(honest, STEPS, question, VOCAB) == []
+
+
+def test_real_people_and_teams_in_the_question_need_no_denial():
+    """Rules 13-14 leave real names alone ("Is Priya Nair on call for Payments?")."""
+    assert verify.check_answer(GOOD, STEPS, "Is Priya Nair on call? Should the Payments "
+                               "team be paged?", VOCAB) == []
+
+
+# Rule 15: (question, answer that calls a real name missing). Live test, Oct 16.
+FALSE_DENIALS = [
+    ("Did Priya Nair deploy anything in the last hour?",
+     "There is no Priya Nair in the graph. The only deploy was fraud-check v3.1.0 "
+     "by Daniel Okafor, 14 minutes ago."),
+    ("Daniel Okafor deployed fraud-check v3.1.0, right?",
+     "No, Daniel Okafor is not in the graph."),
+    ("Who is on call for payments?", "There is no Payments team in the graph."),
+    ("Is fraud-check healthy?", "There is no service called fraud-check in the graph."),
+]
+
+
+@pytest.mark.parametrize("question,answer", FALSE_DENIALS, ids=lambda x: x[:30])
+def test_real_name_called_missing_is_flagged(question, answer):
+    """Rule 15: saying a real person, team or service is not in the graph is a lie."""
+    assert any("says it is not" in p
+               for p in verify.check_answer(answer, STEPS, question, VOCAB))
+
+
+@pytest.mark.parametrize("answer", [
+    'There is no "payments" service in the graph, but there is a Payments team: '
+    "on call is Priya Nair.",
+    "There is no paymentservice v2.0.0 deploy in the graph; the only deploy was "
+    "fraud-check v3.1.0 by Daniel Okafor.",
+], ids=["team-not-service", "deploy-not-service"])
+def test_true_denials_near_real_names_pass(answer):
+    """Rule 15 must not fire on a denial of something else next to a real name."""
+    assert not [p for p in verify.check_answer(answer, STEPS, "Who is on call for payments?",
+                                               VOCAB) if "says it is not" in p]

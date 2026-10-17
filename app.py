@@ -20,6 +20,7 @@ which re-seeds the demo graph when its story has gone stale.
 """
 import logging
 import os
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -27,6 +28,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 import agent
+import diagnose
 import seed
 import tools
 import verify
@@ -198,12 +200,12 @@ def ask(body: Ask):
         log.error("ask failed: %s", e)
         raise HTTPException(status_code=503, detail=str(e))
     vocab = verify.graph_vocabulary(g)
-    out["summary"] = summarize(out, vocab)
+    out["summary"] = summarize(out, vocab, body.question)
     out["timeline"] = timeline(g, out["summary"])
     return out
 
 
-def summarize(out, vocab):
+def summarize(out, vocab, question=""):
     """Pull the facts the UI highlights out of one investigate() result.
 
     Uses only tool rows, plus the answer text to find which services the answer
@@ -213,18 +215,27 @@ def summarize(out, vocab):
     Args:
         out: Return value of agent.investigate().
         vocab: verify.graph_vocabulary(g).
+        question: The user's question, for "missing" below.
 
     Returns:
         {"path": [service, ...] or None,     last dependency path found
          "related": [service, ...],          services the failing service depends on, plus the path
          "root_cause": {"service", "version", "by"} or None,
          "unrelated": [service, ...],        named under "Unrelated" in the answer
-         "page": {"service", "team", "on_call"} or None}   service = the one who_to_page was asked about
+         "page": {"service", "team", "on_call"} or None,  service = the one who_to_page was asked about
+         "pages": [page, ...],               every who_to_page result, in order (several
+                                             failing services, one owner each)
+         "no_cause": bool,                   the answer says no root cause was found, so the
+                                             card says that instead of a blast radius
+         "missing": [name, ...],             services, versions, people and teams the question
+                                             names that the graph does not have, e.g.
+                                             "billing-service", "Sarah Jenkins", "SRE"
+         "rollback": bool}                   the question asks what a rollback would fix
     """
     steps = out["steps"]
     path = out.get("path")
     related = set(path or [])
-    deploys, page = [], None
+    deploys, page, pages = [], None, []
     for s in steps:
         r = s["result"]
         if "error" in r:
@@ -232,22 +243,38 @@ def summarize(out, vocab):
         if s["tool"] == "dependencies":
             related.add(r["service"])
             related.update(d["service"] for d in r["depends_on"])
+        elif s["tool"] == "blast_radius":  # callers are effects, not unrelated
+            related.add(r["service"])
+            related.update(d["service"] for d in r["affected"])
         elif s["tool"] == "recent_changes":
             deploys = r["deploys"]
         elif s["tool"] == "who_to_page":
             page = {"service": r["service"], "team": r["team"], "on_call": r["on_call"]}
+            if page not in pages:
+                pages.append(page)
 
     # The blamed deploy: one the tools returned whose version and service the
     # Root cause section names. If several match, the first (newest) wins.
     cause_text = verify._section(out["answer"].lower(), "root cause")
+    no_cause = bool(re.match(r"\W*(?:not found|none|unknown|no root cause|undetermined)",
+                             cause_text))
+    if no_cause:
+        cause_text = ""  # "Root cause: not found in the graph." blames nothing
     root = next((d for d in deploys
                  if d["version"].lower() in cause_text and d["service"].lower() in cause_text), None)
 
     unrelated_text = verify._section(out["answer"].lower(), "unrelated")
     unrelated = sorted(verify._mentions(unrelated_text, vocab["services"]) - related)
+    # Names in the question the graph lacks, so the card can say so up front
+    # instead of leading with an answer about something else.
+    q = question.lower()
+    missing = [diagnose._as_written(question, name)
+               for _, name in verify.unknown_names(question, vocab)]
     return {"path": path, "related": sorted(related),
             "root_cause": root and {k: root[k] for k in ("service", "version", "by")},
-            "unrelated": unrelated, "page": page}
+            "unrelated": unrelated, "page": page, "pages": pages,
+            "no_cause": no_cause and not root, "missing": missing,
+            "rollback": bool(re.search(r"\broll(?:ing|ed)?[\s-]*back|\brevert", q))}
 
 
 def timeline(g, summary, minutes=60):

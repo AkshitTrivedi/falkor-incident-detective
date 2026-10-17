@@ -96,9 +96,83 @@ def test_summary_ignores_unrelated_claims_about_the_chain(g):
     assert s["root_cause"]["service"] == "fraud-check"
 
 
+def test_summary_lists_names_missing_from_the_graph(g):
+    """billing-service and v2.0.0 are not in the graph; the card must say so."""
+    r = diagnose.rule_answer(g, QUESTION)
+    out = {"answer": "Root cause: fraud-check v3.1.0", "steps": r["steps"], "path": r["path"]}
+    vocab = verify.graph_vocabulary(g)
+    s = app.summarize(out, vocab, "billing-service is down, did the paymentservice v2.0.0 deploy break it?")
+    assert s["missing"] == ["billing-service", "v2.0.0"]
+    assert app.summarize(out, vocab, QUESTION)["missing"] == []
+
+
+def test_summary_counts_callers_as_related(g):
+    """Rollback question: blast_radius callers of fraud-check are not unrelated."""
+    r = diagnose.rule_answer(g, "If we roll back fraud-check, which alerts should clear?")
+    s = app.summarize(r, verify.graph_vocabulary(g))
+    assert s["unrelated"] == ["adservice"]
+    assert {"paymentservice", "checkoutservice"} <= set(s["related"])
+
+
 def test_client_error_is_logged(client, caplog):
     """Browser errors posted to /api/client-error show up in the server log."""
     with caplog.at_level("ERROR", logger="detective.app"):
         r = client.post("/api/client-error", json={"message": "boom", "where": "index.html:1:2"})
     assert r.status_code == 204
     assert "browser: boom at index.html:1:2" in caplog.text
+
+
+def test_summary_marks_rollback_questions(g):
+    """"If we roll back fraud-check..." sets rollback, so the card says
+    "Should clear after rollback" over the alerts on the chain."""
+    vocab = verify.graph_vocabulary(g)
+    out = {"steps": [], "answer": "", "path": None}
+    assert app.summarize(out, vocab, "If we roll back fraud-check, which alerts clear?")["rollback"]
+    assert app.summarize(out, vocab, "Should we revert fraud-check?")["rollback"]
+    assert not app.summarize(out, vocab, "checkoutservice is throwing 5xx")["rollback"]
+
+
+def test_summary_lists_people_and_teams_missing_from_the_graph(g):
+    """The card's notice also names made-up people and teams, as written."""
+    vocab = verify.graph_vocabulary(g)
+    out = {"steps": [], "answer": "", "path": None}
+    assert app.summarize(out, vocab, "Is Sarah Jenkins on call?")["missing"] == ["Sarah Jenkins"]
+    assert app.summarize(out, vocab, "Should I page the SRE team?")["missing"] == ["SRE"]
+    assert app.summarize(out, vocab, "Is Priya Nair on call for Payments?")["missing"] == []
+
+
+@pytest.mark.parametrize("question", ["adservice cache miss rate is high. What broke?",
+                                      "Roll back the cartservice deploy from 10 minutes ago"])
+def test_summary_blames_nothing_when_no_deploy_explains_it(g, question):
+    """The card shows no root cause when the answer says none was found, even
+    though recent_changes returned the fraud-check deploy (edge case C3)."""
+    r = diagnose.rule_answer(g, question)
+    assert "Root cause: not found" in r["answer"]
+    s = app.summarize(r, verify.graph_vocabulary(g), question)
+    assert s["root_cause"] is None and s["no_cause"]
+
+
+def test_summary_pages_every_failing_service_when_no_cause(g):
+    """Two failing services, no deploy to blame: the card gets both owners, not
+    a blast-radius verdict for the last one checked (UI check, Oct 16)."""
+    q = "cartservice and adservice are both failing, what broke?"
+    s = app.summarize(diagnose.rule_answer(g, q), verify.graph_vocabulary(g), q)
+    assert s["no_cause"] and s["root_cause"] is None
+    assert [(p["service"], p["on_call"]) for p in s["pages"]] == [
+        ("cartservice", "Omar Haddad"), ("adservice", "Maya Chen")]
+
+
+def test_summary_has_no_no_cause_flag_when_a_deploy_is_blamed(g):
+    """The fraud-check story keeps its root-cause card."""
+    q = "checkoutservice is throwing 5xx errors. What broke?"
+    s = app.summarize(diagnose.rule_answer(g, q), verify.graph_vocabulary(g), q)
+    assert s["root_cause"]["service"] == "fraud-check" and not s["no_cause"]
+
+
+def test_off_topic_questions_skip_the_models(g, monkeypatch):
+    """"hello there" and write requests never reach a model (no client is built)."""
+    monkeypatch.setattr(agent, "make_client", lambda *a, **k: pytest.fail("model was called"))
+    for q in ("hello there", "Delete all alerts", "who is akshit?",
+              "billing-service is down, who do I page?", "Who is on call for the SRE team?"):
+        out = agent.investigate(q, g=g)
+        assert out["provider"] == "rules" and out["steps"] == [] and out["llm_calls"] == 0

@@ -17,7 +17,7 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
   4. Page: if people are named, at least one must be a returned on-call person.
   5. Unrelated: must not list an alerting service that the tools showed the
      failing service depends on (its dependencies() list or the dependency
-     path). Only services with an open alert count, so naming the root cause
+     path), or that calls it (blast_radius()). Only services with an open alert count, so naming the root cause
      for comparison ("unrelated to fraud-check") is fine.
   6. No invented people. Rule 1 only knows names that exist in the graph, so a
      made-up "Sarah Jenkins" (Gemini, Oct 16) or "Maya Lin" (round 3, story C)
@@ -42,6 +42,13 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
      in the graph, the answer must say so ("not in the graph", "doesn't exist").
  12. Unknown versions from the question ("Did the paymentservice v2.0.0 deploy
      cause it?"): if no such deploy exists, the answer must say so.
+ 13. Unknown people from the question ("Is Sarah Jenkins on call?"): the
+     answer must say there is no such person.
+ 14. Unknown teams from the question ("Should I page the SRE team?"): the
+     answer must say there is no such team.
+
+Rules 11-14 need the denial in a sentence that names the thing: "adservice is
+not in the dependency path" does not deny that v2.0.0 exists (Gemini, Oct 17).
 
 The adversarial set in tests/test_verify_adversarial.py has one made-up
 answer per kind of lie and one correct answer per style; all must hold.
@@ -49,6 +56,7 @@ answer per kind of lie and one correct answer per style; all must hold.
 agent.py uses the problems to ask the model for one corrected answer. If that
 one fails too, it shows plain_answer() instead: the tool rows, with no model text.
 """
+import difflib
 import json
 import re
 
@@ -104,6 +112,16 @@ NO_DEPLOY = NOT_FOUND + ("no deploy", "not deployed", "wasn't deployed", "was no
                          "no record", "not a recent", "isn't a recent", "is not a recent",
                          "only deploy", "only recent deploy", "only change", "never deployed",
                          "did not happen", "didn't happen", "no such")
+
+# Rule 13: ways of saying a person is not in the graph, on top of NOT_FOUND.
+NO_PERSON = NOT_FOUND + ("no one named", "nobody named", "no person", "not a person",
+                         "not on call", "not on-call", "isn't on call", "isn't on-call",
+                         "not the on-call", "not the on call")
+# Rule 13: capitalised question words that start a sentence, not a name.
+_QUESTION_WORDS = {"is", "are", "was", "did", "does", "do", "should", "can", "could", "who",
+                   "what", "why", "when", "where", "which", "will", "has", "have", "tell",
+                   "ask", "ping", "call", "hey", "please", "if", "then", "so", "and", "but"}
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[^a-z0-9])|\n+")
 
 # Rule 6. A person-like name: two to four Title-case words ("Priya Nair").
 _NAME_WORDS = r"[A-Z][a-z]+(?:[ \u00a0]+[A-Z][a-z]+){1,3}"
@@ -194,6 +212,122 @@ def _invented_people(answer, vocab):
     return sorted(invented)
 
 
+def _called_out(text, name, phrases):
+    """Rules 11-14: True if a sentence of `text` names `name` and denies it.
+
+    Args:
+        text: The answer, lower-case, markdown stripped.
+        name: The unknown name from the question, lower-case.
+        phrases: Denial phrases, e.g. NOT_FOUND.
+
+    Returns:
+        bool. An answer that never repeats the name has not called it out.
+    """
+    for sentence in _SENTENCE_END.split(text):
+        if not _mentions(sentence, {name}):
+            continue
+        if (any(p in sentence for p in phrases)
+                or re.search(rf"\bno\s+(?:\w+\s+){{0,3}}?['\"]?{re.escape(name)}", sentence)):
+            return True
+    return False
+
+
+def _question_people(question, vocab):
+    """Rule 13: person-like names in the question that are not people in the graph.
+
+    Args:
+        question: The user's question, original case.
+        vocab: graph_vocabulary().
+
+    Returns:
+        Sorted list of the names, lower-case ("sarah jenkins").
+    """
+    stop = (_NOT_NAME_WORDS | _QUESTION_WORDS | set(_TEAM_FILLER)
+            | {w for t in vocab.get("teams", ()) for w in re.findall(r"[a-z]+", t)})
+    unknown = set()
+    for name in _PERSON.findall(question):
+        words = name.split()
+        while words and words[0].lower() in stop:
+            words.pop(0)
+        while words and words[-1].lower() in stop:
+            words.pop()
+        name = " ".join(words).lower()
+        if len(words) >= 2 and name not in vocab["people"]:
+            unknown.add(name)
+    # "who is akshit?": one lower-case word is a name too when the whole
+    # question asks who someone is (live test, Oct 16: Gemini answered it from
+    # nothing). A first name of someone in the graph ("who is priya?") is known.
+    m = _WHO_IS.match(question.lower().replace("\u2019", "'"))
+    if m:
+        words = m.group(1).split()
+        known = ({w for p in vocab["people"] for w in p.split()} | vocab["services"]
+                 | {w for t in vocab.get("teams", ()) for w in re.findall(r"[a-z]+", t)})
+        if not any(w in stop or w in known or w in _NOT_WHO for w in words):
+            unknown.add(" ".join(words))
+    return sorted(unknown)
+
+
+# "who is akshit?" / "who's ravi k?": the whole question asks who one or two words are.
+_WHO_IS = re.compile(r"^\s*who(?:\s+is|'s)\s+([a-z][a-z.'-]*(?:\s+[a-z][a-z.'-]*)?)\s*[?.!]*\s*$")
+# Words after "who is" that are not a name: "who is responsible?", "who is paged?".
+_NOT_WHO = {"responsible", "paged", "affected", "down", "it", "he", "she", "they", "this", "that",
+            "there", "here", "me", "you", "we", "oncall", "on-call", "available", "around",
+            "awake", "online", "free", "in", "at", "to", "for", "blamed", "guilty", "accountable"}
+
+
+# "ledger service" written as two words: the first word, unless it is one of these.
+_SERVICE_TWO_WORDS = re.compile(r"(?<![\w-])([a-z][a-z0-9]*)\s+service\b")
+_NOT_SERVICE_FIRST = {"the", "a", "an", "which", "what", "each", "every", "any", "that", "this",
+                      "one", "other", "another", "same", "web", "micro", "my", "our", "your",
+                      "their", "its", "of", "for", "to", "in", "on", "is", "no", "some", "affected",
+                      "failing", "broken", "down", "customer", "external", "internal", "backend",
+                      "frontend", "data", "whole", "entire", "single", "root", "caller", "upstream",
+                      "downstream", "dependent", "owning", "on-call", "me"}
+
+
+# Everyday words that look like misspelt service names to difflib.
+_NOT_TYPOS = {"service", "services", "serviced", "servicing", "frontends", "payments", "payment"}
+
+
+def unknown_names(question, vocab):
+    """Everything the question names that the graph does not have.
+
+    Used by the rules answer (it starts with "There is no ... in the graph")
+    and by app.summarize() (the card's "Not in the graph" notice), so both
+    list the same names the checker's rules 11-14 ask the model to call out.
+
+    Args:
+        question: The user's question, original case.
+        vocab: graph_vocabulary().
+
+    Returns:
+        Sorted list of (kind, name), kind in "service" | "version" | "person" | "team",
+        e.g. [("service", "billing-service"), ("team", "sre")].
+    """
+    q = question.lower().replace("’", "'")
+    services = vocab["services"]
+    found = {("service", w) for w in _SERVICE_LIKE.findall(q) if w not in services | _NOT_SERVICES}
+    for word in _SERVICE_TWO_WORDS.findall(q):
+        if (word not in _NOT_SERVICE_FIRST and word not in services
+                and not any(s.startswith(word) or word.startswith(s.replace("service", "").strip("-"))
+                            for s in services)):
+            found.add(("service", f"{word} service"))
+    # Misspelt service names ("paymentsdb", "fronted", "chekoutservice"): a
+    # word of 6+ letters at least 90% like a real name. "services" is not one
+    # (it is 94% like "adservice").
+    for word in set(re.findall(r"(?<![\w-])[a-z][a-z0-9-]{5,}(?![\w-])", q)) - services - _NOT_TYPOS:
+        if difflib.get_close_matches(word, services, n=1, cutoff=0.9):
+            found.add(("service", word))
+    found |= {("version", v) for v in _VERSION.findall(q) if v not in vocab["versions"]}
+    found |= {("person", p) for p in _question_people(question, vocab)}
+    team_words = {w for t in vocab.get("teams", ()) for w in re.split(r"[\s/&]+", t) if w}
+    for word in _TEAM_WORD.findall(q):
+        parts = [w for w in re.split(r"[/&]+", word) if w]
+        if word not in _TEAM_FILLER and team_words and not all(w in team_words for w in parts):
+            found.add(("team", word))
+    return sorted(found)
+
+
 def _mentions(text, names):
     """Return the names from `names` that appear in `text` as whole words.
 
@@ -238,6 +372,10 @@ def _returned(steps):
         if "depends_on" in result:
             facts["chains"].append((result["service"].lower(),
                                     {d["service"].lower() for d in result["depends_on"]}))
+        # Callers of a service are on its chain too: their alerts are effects.
+        if "affected" in result:
+            facts["chains"].append((result["service"].lower(),
+                                    {d["service"].lower() for d in result["affected"]}))
         if result.get("path"):
             path = [p.lower() for p in result["path"]]
             facts["chains"].append((path[0], set(path[1:])))
@@ -353,18 +491,77 @@ def check_answer(answer, steps, question, vocab):
             problems.append(f"'{value}{unit}' does not appear in any tool result")
 
     # Rule 11: a service from the question that is not in the graph must be called unknown.
-    for word in sorted(set(_SERVICE_LIKE.findall(q)) - vocab["services"] - _NOT_SERVICES):
-        denied = (any(p in plain for p in NOT_FOUND)
-                  or re.search(rf"\bno\s+(?:\w+\s+){{0,3}}?['\"]?{re.escape(word)}", plain))
-        if word in a and not denied:
+    # "ledger service" (two words) may be written "ledger-service" or "ledger".
+    for kind, word in unknown_names(question, vocab):
+        if kind != "service":
+            continue
+        variants = {word, word.replace(" ", "-"), word.replace(" ", ""), word.split()[0]}
+        if not any(_called_out(plain, v, NOT_FOUND) for v in variants):
             problems.append(f"'{word}' is not in the graph, but the answer does not say so")
 
     # Rule 12: a version from the question that was never deployed must be called so.
+    # "The only deploy was fraud-check v3.1.0" also denies it without repeating it.
+    only = re.search(r"\bonly\s+(?:recent\s+)?(?:deploy|change)", plain)
     for version in sorted(set(_VERSION.findall(q)) - vocab["versions"]):
-        if not any(p in plain for p in NO_DEPLOY):
+        if not only and not _called_out(plain, version, NO_DEPLOY):
             problems.append(f"there is no {version} deploy in the graph, but the answer "
                             "does not say so")
+
+    # Rule 13: a person from the question who is not in the graph must be called so.
+    for name in _question_people(question.replace("’", "'"), vocab):
+        if not _called_out(plain, name, NO_PERSON):
+            problems.append(f"there is no person named '{name}' in the graph, but the "
+                            "answer does not say so")
+
+    # Rule 14: a team from the question that is not in the graph must be called so.
+    team_words = {w for t in vocab.get("teams", ()) for w in re.split(r"[\s/&]+", t) if w}
+    for word in sorted(set(_TEAM_WORD.findall(q))):
+        parts = [w for w in re.split(r"[/&]+", word) if w]
+        if word in _TEAM_FILLER or not team_words or all(w in team_words for w in parts):
+            continue
+        if not _called_out(plain, word, NOT_FOUND + ("no team",)):
+            problems.append(f"there is no '{word}' team in the graph, but the answer "
+                            "does not say so")
+
+    # Rule 15: a real service, person or team must not be called missing.
+    # Live test, Oct 16: "There is no Priya Nair in the graph." and "Mei Lin is
+    # not in the graph" (both are people in the graph) passed rules 1-14.
+    real = ([("service", n) for n in vocab["services"]] + [("person", n) for n in vocab["people"]]
+            + [("team", t.lower()) for t in vocab.get("teams", ())])
+    for kind, name in sorted(real):
+        if _denied(plain, name, kind):
+            problems.append(f"'{name}' is in the graph, but the answer says it is not")
     return problems
+
+
+def _denied(text, name, kind):
+    """Rule 15: True if `text` says `name` is not in the graph.
+
+    Only a sentence that makes the name itself the missing thing counts:
+    "There is no Priya Nair in the graph", "Mei Lin is not in the graph",
+    "no service called paymentservice". "There is no paymentservice v2.0.0
+    deploy in the graph" denies the deploy, not the service, and "There is
+    no payments service" is true of the Payments team, so neither counts.
+
+    Args:
+        text: The answer, lower-case, markdown stripped.
+        name: A real name from graph_vocabulary(), lower-case.
+        kind: "service", "person" or "team"; only the right noun counts
+            ("no Payments team" denies the team, "no payments service" does not).
+
+    Returns:
+        bool.
+    """
+    noun = {"service": "service", "person": "(?:person|one)", "team": "team"}[kind]
+    n = r"['\"]?" + re.escape(name) + r"['\"]?"
+    suffix = rf"(?: {noun})?" if kind != "person" else ""
+    patterns = (
+        rf"\bthere(?: is|'s) no (?:{noun} (?:named|called) )?{n}{suffix} in the graph",
+        rf"(?<![\w-]){n}{suffix} (?:is not|isn't|was not|wasn't) (?:in|part of) the graph",
+        rf"(?<![\w-]){n}{suffix} (?:does not|doesn't) exist",
+        rf"\bno {noun} (?:named|called) {n}(?![\w-])",
+    )
+    return any(re.search(p, text) for p in patterns)
 
 
 def plain_answer(steps):

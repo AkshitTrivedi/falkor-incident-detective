@@ -181,8 +181,9 @@ def test_failed_retry_falls_back_to_rules(g, fake_llms):
     assert out["check"]["by_rules"] and out["provider"] == "groq"
     assert out["answer"].startswith("Diagnosis by rules")
     assert "Page: Payments team, on call Priya Nair." in out["answer"]
-    # The trace shows the model's tool call, then the rules' own calls.
-    assert [s["tool"] for s in out["steps"]][:2] == ["who_to_page", "recent_changes"]
+    # The trace shows the model's tool call, then the rules' own (an ownership
+    # question, so the rules call who_to_page too).
+    assert [s["tool"] for s in out["steps"]][:2] == ["who_to_page", "who_to_page"]
 
 
 def test_retry_error_falls_back_to_rules(g, fake_llms):
@@ -358,3 +359,37 @@ def test_loop_uses_the_draft(monkeypatch):
     out = agent._investigate_once("If we roll back fraud-check?", get_graph(), "groq", "fake",
                                   4, True)
     assert "Alerts that should clear" in out["answer"]
+
+
+@pytest.mark.parametrize("answer,expected", [
+    ("Root cause: N/A — this is an ownership question.\nEvidence: N/A\nUnrelated: N/A\n"
+     "**Page:** N/A\n\nadservice is owned by the Storefront team; on call is Maya Chen.",
+     "adservice is owned by the Storefront team; on call is Maya Chen."),
+    ("Root cause: fraud-check v3.1.0\nUnrelated: none\nPage: Payments team, Priya Nair",
+     "Root cause: fraud-check v3.1.0\nUnrelated: none\nPage: Payments team, Priya Nair"),
+    ("Root cause: N/A", "Root cause: N/A"),
+], ids=["na-lines", "real-sections", "nothing-left"])
+def test_drop_empty_sections(answer, expected):
+    """O1, live Oct 16: "N/A" section lines go; real sections and lone answers stay."""
+    assert agent._drop_empty_sections(answer) == expected
+
+
+VOCAB = {"services": {"checkoutservice", "paymentservice", "fraud-check"},
+         "people": {"priya nair", "daniel okafor"}, "versions": {"v3.1.0"},
+         "teams": {"payments", "checkout"}}
+
+
+@pytest.mark.parametrize("question,answer,expected", [
+    ("Is Sarah Jenkins on call for payments right now?",
+     "No, Sarah Jenkins is not on call; the Payments on-call is Priya Nair.",
+     "There is no person named Sarah Jenkins in the graph.\n"),
+    ("Is Sarah Jenkins on call?", "There is no Sarah Jenkins in the graph.", ""),
+    ("chekoutservice is failing, what broke?", "Root cause: fraud-check v3.1.0",
+     "There is no service called chekoutservice in the graph. Did you mean checkoutservice?\n"),
+    ("Did the paymentservice v2.0.0 deploy cause it?",
+     "There is no paymentservice v2.0.0 deploy in the graph.", ""),
+    ("checkoutservice is failing, what broke?", "Root cause: fraud-check v3.1.0", ""),
+], ids=["person-not-denied", "person-denied", "typo", "version-denied", "all-real"])
+def test_missing_notes(question, answer, expected):
+    """F3, live Oct 16: a model answer that never says the name is missing gets the line."""
+    assert agent._missing_notes(question, answer, VOCAB) == expected

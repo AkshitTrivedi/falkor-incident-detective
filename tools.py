@@ -298,19 +298,32 @@ def who_to_page(g, service):
 
     Usually the agent's last call, once it has found the root-cause service.
     OPTIONAL MATCH keeps the team in the answer even if nobody is on call.
+    A team name also works ("payments"): models pass one when the user asks
+    "who is on call for payments?" (Gemini, live probe Oct 17).
 
     Args:
         g: FalkorDB Graph handle.
-        service: Name of the root-cause service, e.g. "fraud-check".
+        service: Name of the root-cause service, e.g. "fraud-check", or a team name.
 
     Returns:
         {"service": str, "team": str, "on_call": str or None, "cypher": str}
-        or the _check_service error dict for an unknown name.
+        ("service" is None when a team was asked for), or the _check_service
+        error dict, with "known_teams" added, for an unknown name.
 
     Example (Story A):
         who_to_page(g, "fraud-check") -> team "Payments", on_call "Priya Nair"
+        who_to_page(g, "payments")    -> team "Payments", on_call "Priya Nair"
     """
     if err := _check_service(g, service):
+        cypher = ("MATCH (t:Team) WHERE toLower(t.name) = toLower($name) "
+                  "OPTIONAL MATCH (p:Person {on_call: true})-[:MEMBER_OF]->(t) "
+                  "RETURN t.name, p.name")
+        params = {"name": service}
+        rows = _run(g, cypher, params)
+        if rows:
+            return {"service": None, "team": rows[0][0], "on_call": rows[0][1],
+                    "cypher": cypher, "params": params}
+        err["known_teams"] = [r[0] for r in _run(g, "MATCH (t:Team) RETURN t.name ORDER BY t.name")]
         return err
     cypher = ("MATCH (s:Service {name: $name})<-[:OWNS]-(t:Team) "
               "OPTIONAL MATCH (p:Person {on_call: true})-[:MEMBER_OF]->(t) "

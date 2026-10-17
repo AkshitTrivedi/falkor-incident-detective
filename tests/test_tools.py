@@ -106,3 +106,17 @@ def test_runnable_escapes_quotes(ctx):
     q = tools.runnable("RETURN $s", {"s": 'a"b\'c'})
     assert g.ro_query(q).result_set == [['a"b\'c']]
     assert tools.runnable("RETURN 1", None) == "RETURN 1"
+
+
+def test_who_to_page_accepts_a_team_name(ctx):
+    """"Who is on call for payments?": the team name works, any case."""
+    g, _ = ctx
+    r = tools.who_to_page(g, "payments")
+    assert (r["team"], r["on_call"]) == ("Payments", "Priya Nair")
+
+
+def test_who_to_page_unknown_name_lists_teams(ctx):
+    """An unknown name gets both lists back, so the model can retry."""
+    g, _ = ctx
+    r = tools.who_to_page(g, "sre")
+    assert "unknown service" in r["error"] and "Payments" in r["known_teams"]

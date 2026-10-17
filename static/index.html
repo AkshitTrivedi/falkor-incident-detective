@@ -18,8 +18,14 @@
       and selection; red / orange / amber are kept for health and failure only.
     * Geist and Geist Mono, four text sizes (12/13/15/20); hierarchy by weight
       and colour, not size. Lucide icons inlined as SVG; the 🕵️ logo is the one emoji.
-    * Graph: node kind is shown by shape, health by border colour and glow;
-      an answer fades everything off the failure chain instead of hiding it.
+    * Depth: cards have a faint top-lit gradient and an inner highlight; a soft
+      indigo glow sits behind the header and the empty page.
+    * Motion: the answer card rises in, steps tick in one by one, and the
+      failure path draws edge by edge from the root cause outwards.
+    * Graph: tier is shown by tint and a small icon (globe = edge, box =
+      backend, cylinder = datastore, cloud = external), health by border
+      colour and glow; an answer fades everything off the failure chain and
+      gives the chain a red glow. A vignette darkens the canvas edges.
 
   Libraries (pinned, from jsDelivr): cytoscape 3.30.2, dagre 0.8.5, cytoscape-dagre 2.5.0.
   Fonts: Geist and Geist Mono from Google Fonts (OFL).
@@ -47,7 +53,9 @@
     --high: #f76b15; --high-text: #ff801f; --high-bg: #331e0b;
     --medium: #ffc53d; --medium-text: #ffca16; --medium-bg: #302008;
     --ok: #30a46c; --ok-text: #3dd68c; --ok-bg: #132d21; --ok-line: #20573e;
-    --data: #6e56cf;
+    --data: #6e56cf; --data-bg: #1c1733; --edge-bg: #13213a; --violet: #8e4ec6;
+    --sheen: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.012));
+    --lift: inset 0 1px 0 rgba(255,255,255,.05), 0 1px 2px rgba(0,0,0,.35), 0 8px 24px -12px rgba(0,0,0,.6);
     --sans: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
     --r: 8px;
@@ -63,10 +71,14 @@
   .num { font-variant-numeric: tabular-nums; }
 
   /* Header */
-  header { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 48px; flex: none;
-           border-bottom: 1px solid var(--border); background: var(--panel); }
+  header { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 52px; flex: none; position: relative;
+           border-bottom: 1px solid var(--border);
+           background: radial-gradient(600px 80px at 0% 0%, rgba(62,99,221,.22), transparent 70%),
+                       radial-gradient(500px 80px at 100% 0%, rgba(142,78,198,.12), transparent 70%), var(--panel); }
+  header::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+                  background: linear-gradient(90deg, transparent, rgba(158,177,255,.45), transparent); }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; white-space: nowrap; margin: 0; letter-spacing: -.01em; }
-  .brand .logo { font-size: 20px; line-height: 1; }
+  .brand .logo { font-size: 22px; line-height: 1; filter: drop-shadow(0 0 8px rgba(158,177,255,.35)); }
   .brand .accent { color: var(--accent-text); }
   .by-falkor { color: var(--faint); font-size: 12px; font-weight: 400; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-left: 4px; letter-spacing: 0; }
   .stat { color: var(--muted); white-space: nowrap; }
@@ -90,15 +102,22 @@
   .section-label { font-size: 12px; color: var(--faint); font-weight: 500; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
 
   /* Empty state */
-  .intro h2 { font-size: 20px; line-height: 1.3; margin: 8px 0 8px; font-weight: 600; letter-spacing: -.01em; }
-  .intro p { color: var(--muted); margin: 0 0 20px; }
+  .intro { position: relative; }
+  .intro::before { content: ""; position: absolute; inset: -16px -16px auto; height: 260px; pointer-events: none;
+                   background: radial-gradient(ellipse 70% 60% at 15% 0%, rgba(62,99,221,.26), transparent 70%),
+                               radial-gradient(ellipse 50% 50% at 95% 10%, rgba(142,78,198,.16), transparent 70%); }
+  .intro > * { position: relative; }
+  .intro h2 { font-size: 27px; line-height: 1.2; margin: 10px 0 10px; font-weight: 700; letter-spacing: -.025em;
+              background: linear-gradient(95deg, #fff 30%, #9eb1ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .intro p { color: var(--muted); margin: 0 0 20px; font-size: 13.5px; }
   .examples { display: grid; gap: 8px; }
-  .example { display: flex; gap: 12px; align-items: flex-start; text-align: left; width: 100%; cursor: pointer;
-             background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
-  .example:hover { border-color: var(--accent-line); background: var(--panel-2); }
-  .example .ico { width: 28px; height: 28px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border);
-                  display: grid; place-items: center; color: var(--muted); flex: none; }
-  .example:hover .ico { color: var(--accent-text); }
+  .example { display: flex; gap: 12px; align-items: center; text-align: left; width: 100%; cursor: pointer;
+             background: var(--sheen), var(--panel); box-shadow: var(--lift); border: 1px solid var(--border);
+             border-radius: 10px; padding: 11px 12px; transition: transform .15s ease, border-color .15s ease; }
+  .example:hover { border-color: color-mix(in srgb, var(--c) 45%, var(--border)); transform: translateY(-1px); }
+  .example .ico { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; flex: none; color: var(--c);
+                  background: color-mix(in srgb, var(--c) 16%, transparent); border: 1px solid color-mix(in srgb, var(--c) 32%, transparent);
+                  box-shadow: 0 0 16px -4px color-mix(in srgb, var(--c) 55%, transparent); }
   .example b { display: block; font-weight: 500; }
   .example small { color: var(--faint); font-size: 12px; }
   .how { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--faint); font-size: 12px; display: grid; gap: 6px; }
@@ -121,8 +140,14 @@
   .menu .cur { color: var(--accent-text); }
 
   /* Verdict card */
-  .verdict { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .verdict { background: var(--sheen), var(--panel); box-shadow: var(--lift); border: 1px solid var(--border);
+             border-radius: 12px; overflow: hidden; animation: rise .35s ease-out both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   .verdict .top { padding: 14px 14px 12px; }
+  .verdict .top.cause { padding: 16px 16px 14px; border-bottom: 1px solid var(--critical-line);
+                        background: radial-gradient(120% 140% at 0% 0%, rgba(229,72,77,.30), rgba(229,72,77,.07) 60%, transparent); }
+  .verdict .top.cause .headline { font-size: 24px; }
+  .verdict .top.cause .subline { color: var(--text); opacity: .8; }
   .kind { font-size: 12px; font-weight: 500; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
   .kind.cause { color: var(--critical-text); }
   .headline { font-size: 20px; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; }
@@ -135,15 +160,27 @@
   .chain .arrow { color: var(--faint); }
   .evidence { display: grid; gap: 4px; }
   .ev { display: flex; gap: 8px; align-items: baseline; }
-  .ev .dot { transform: translateY(-1px); }
+  .sev { font: 600 10px/16px var(--mono); letter-spacing: .04em; text-transform: uppercase; border-radius: 4px; padding: 0 5px;
+         flex: none; color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent);
+         border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); box-shadow: 0 0 10px -2px color-mix(in srgb, var(--c) 60%, transparent);
+         min-width: 40px; text-align: center; }
   .ev .msg { flex: 1; color: var(--muted); min-width: 0; }
   .ev .ago { color: var(--faint); font: 12px var(--mono); white-space: nowrap; }
-  .page { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--ok-line); background: var(--ok-bg); }
-  .page .bell { width: 28px; height: 28px; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; flex: none; }
-  .page b { font-weight: 600; }
+  .page { display: flex; align-items: center; gap: 12px; width: calc(100% - 24px); margin: 4px 12px 12px; padding: 10px 12px;
+          text-align: left; cursor: pointer; border-radius: 10px; border: 1px solid #2b7a55;
+          background: linear-gradient(180deg, rgba(61,214,140,.16), rgba(48,164,108,.08)); box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 0 24px -10px rgba(61,214,140,.6);
+          transition: transform .15s ease, box-shadow .15s ease; }
+  .page:hover { transform: translateY(-1px); box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 0 28px -8px rgba(61,214,140,.75); }
+  .page .bell { width: 32px; height: 32px; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; flex: none;
+                box-shadow: 0 0 0 4px rgba(48,164,108,.2); }
+  .page b { font-weight: 600; font-size: 14px; }
   .page small { display: block; color: var(--muted); font-size: 12px; }
-  .page.none { background: var(--panel-2); border-top-color: var(--border); }
-  .page.none .bell { background: var(--faint); }
+  .page .go { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--ok-text);
+              border: 1px solid #2b7a55; border-radius: 7px; padding: 4px 9px; background: rgba(19,45,33,.7); white-space: nowrap; }
+  .page.done .go { color: #fff; background: var(--ok); }
+  .page.none { cursor: default; border-color: var(--border); background: var(--panel-2); box-shadow: none; }
+  .page.none:hover { transform: none; }
+  .page.none .bell { background: var(--faint); box-shadow: none; }
 
   /* Service names: small mono pills, clickable */
   .svc { font: 12px var(--mono); background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px;
@@ -154,9 +191,9 @@
 
   /* Meta row: model badge and check */
   .metarow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 6px; font-size: 12px; }
-  .tag { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 6px;
-         padding: 2px 8px; color: var(--muted); background: var(--panel); white-space: nowrap; }
-  .tag.ok { color: var(--ok-text); border-color: var(--ok-line); }
+  .tag { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 7px;
+         padding: 3px 9px; color: var(--muted); background: var(--sheen), var(--panel); box-shadow: var(--lift); white-space: nowrap; }
+  .tag.ok { color: var(--ok-text); border-color: var(--ok-line); box-shadow: 0 0 14px -6px rgba(61,214,140,.6); }
   .tag.warn { color: var(--medium-text); border-color: #4a3a12; }
   .model { position: relative; }
   .model summary { list-style: none; cursor: pointer; }
@@ -181,7 +218,10 @@
 
   /* Steps */
   .block { margin-bottom: 18px; }
-  .steps { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+  .steps { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+           background: var(--sheen), var(--panel); box-shadow: var(--lift); }
+  .steps:not(.loading) li { animation: tick .3s ease-out both; animation-delay: calc(var(--i, 0) * 70ms); }
+  @keyframes tick { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
   .steps li { display: flex; align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer; border-top: 1px solid var(--border); }
   .steps li:first-child { border-top: 0; }
   .steps li:hover { background: var(--panel-2); }
@@ -228,13 +268,21 @@
   .copy.done { color: var(--ok-text); border-color: var(--ok-line); }
   .qbox .copy { position: absolute; top: 6px; right: 6px; }
 
-  /* Loading */
-  .skel { height: 12px; border-radius: 4px; background: linear-gradient(90deg, var(--panel-2) 25%, var(--hover) 50%, var(--panel-2) 75%);
-          background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
-  @keyframes shimmer { to { background-position: -200% 0; } }
+  /* Loading: one card that says what is happening, with an elapsed timer */
+  .working { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 16px 18px; }
+  .working .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .working .row .num { margin-left: auto; color: var(--muted); font-weight: 400; }
+  .working ul { margin: 10px 0 0 24px; padding: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+
+  /* Names in the question the graph does not have, shown above the verdict */
+  .notice { display: flex; gap: 8px; align-items: flex-start; padding: 10px 14px; font-size: 13px;
+            color: var(--medium-text); background: rgba(245,166,35,.08); border-bottom: 1px solid #4a3a12; }
+  .notice svg { flex: none; margin-top: 2px; }
   .spinner { width: 14px; height: 14px; border: 2px solid var(--border-2); border-top-color: var(--accent-text); border-radius: 50%;
              animation: spin .8s linear infinite; flex: none; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* People who ask the OS for less motion get none of the rise/tick fades. */
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   .error-card { border: 1px solid var(--critical-line); background: var(--critical-bg); border-radius: 10px; padding: 12px 14px; color: var(--critical-text); }
 
   /* Input */
@@ -254,8 +302,11 @@
   .graph-wrap { position: relative; min-height: 0; overflow: hidden;
                 background: radial-gradient(circle at 1px 1px, var(--grid) 1px, transparent 0) 0 0 / 20px 20px, var(--canvas); }
   #cy { position: absolute; inset: 0; }
+  .graph-wrap::after { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 2;
+                       background: radial-gradient(ellipse 75% 70% at 55% 50%, transparent 55%, rgba(0,0,0,.55)); }
   .overlay { position: absolute; z-index: 3; }
-  .glass { background: rgba(24,25,27,.9); border: 1px solid var(--border); border-radius: var(--r); backdrop-filter: blur(8px); }
+  .glass { background: rgba(24,25,27,.85); border: 1px solid var(--border-2); border-radius: 10px; backdrop-filter: blur(10px);
+           box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 8px 24px -10px rgba(0,0,0,.7); }
   .gtools { top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; pointer-events: none; }
   .gtools > * { pointer-events: auto; }
   .search { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 32px; color: var(--faint); width: 220px; }
@@ -265,15 +316,16 @@
   .tb { height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted); font-size: 12px; }
   .tb:hover { color: var(--text); border-color: var(--border-2); }
   .gtools .right { margin-left: auto; }
-  .player { left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 4px;
-            font-size: 12px; color: var(--muted); width: min(680px, calc(100% - 260px)); }
+  .player { left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 4px 6px;
+            font-size: 12px; color: var(--muted); width: min(760px, calc(100% - 240px)); height: 50px; box-shadow: var(--lift); }
   .player[hidden] { display: none; }
   .player .pos { width: 58px; flex: none; text-align: center; color: var(--text); font-weight: 500; }
   .player .ghost { flex: none; }
   .player #replay { width: 68px; justify-content: center; }
-  .player .cap { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px 0 10px;
+  .player .cap { flex: 1; min-width: 0; height: 34px; display: flex; align-items: center; padding: 0 6px 0 12px;
                  margin-left: 4px; border-left: 1px solid var(--border); }
-  .player .cap:empty { display: none; }
+  /* Up to two lines; the box never changes size, so the buttons never move. */
+  .player .capt { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 16px; }
   .player code { font: 12px var(--mono); color: var(--text); }
   .zoom { right: 12px; bottom: 12px; display: flex; flex-direction: column; overflow: hidden; }
   .zoom button { width: 32px; height: 32px; display: grid; place-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; }
@@ -337,11 +389,11 @@
         <h2>What broke, why, and who to page.</h2>
         <p>Ask about an incident. The agent answers only from the service graph, using fixed read-only queries, and every claim is checked against what they returned.</p>
         <div class="examples">
-          <button class="example" data-q="checkoutservice is throwing 5xx errors. What broke?"><span class="ico" data-icon="zap"></span><span><b>checkoutservice is throwing 5xx errors. What broke?</b><small>Root cause and who to page</small></span></button>
-          <button class="example" data-q="What breaks if payments-db goes down?"><span class="ico" data-icon="network"></span><span><b>What breaks if payments-db goes down?</b><small>Blast radius</small></span></button>
-          <button class="example" data-q="Which services are most critical?"><span class="ico" data-icon="target"></span><span><b>Which services are most critical?</b><small>Betweenness centrality</small></span></button>
-          <button class="example" data-q="Is the adservice alert related to the checkout errors?"><span class="ico" data-icon="search"></span><span><b>Is the adservice alert related to the checkout errors?</b><small>Red herring</small></span></button>
-          <button class="example" data-q="billing-service is down, who do I page?"><span class="ico" data-icon="help"></span><span><b>billing-service is down, who do I page?</b><small>Not in the graph</small></span></button>
+          <button class="example" style="--c:var(--critical)" data-q="checkoutservice is throwing 5xx errors. What broke?"><span class="ico" data-icon="zap"></span><span><b>checkoutservice is throwing 5xx errors. What broke?</b><small>Root cause and who to page</small></span></button>
+          <button class="example" style="--c:var(--high)" data-q="What breaks if payments-db goes down?"><span class="ico" data-icon="network"></span><span><b>What breaks if payments-db goes down?</b><small>Blast radius</small></span></button>
+          <button class="example" style="--c:#8e7cf0" data-q="Which services are most critical?"><span class="ico" data-icon="target"></span><span><b>Which services are most critical?</b><small>Betweenness centrality</small></span></button>
+          <button class="example" style="--c:var(--medium)" data-q="Is the adservice alert related to the checkout errors?"><span class="ico" data-icon="search"></span><span><b>Is the adservice alert related to the checkout errors?</b><small>Red herring</small></span></button>
+          <button class="example" style="--c:#7c8ad8" data-q="billing-service is down, who do I page?"><span class="ico" data-icon="help"></span><span><b>billing-service is down, who do I page?</b><small>Not in the graph</small></span></button>
         </div>
         <div class="how">
           <div><span data-icon="shield"></span>The model never writes Cypher. It picks one of six parameterised, read-only tools.</div>
@@ -374,7 +426,7 @@
       <span class="pos num" id="pos" aria-live="polite"></span>
       <button class="ghost" id="next" type="button" title="Next step (→ key)" aria-label="Next step"><span data-icon="right"></span></button>
       <button class="ghost" id="replay" type="button" title="Play the steps"></button>
-      <span class="cap" id="caption" aria-live="polite"></span>
+      <span class="cap"><span class="capt" id="caption" aria-live="polite"></span></span>
     </div>
 
     <aside class="overlay glass inspector" id="inspector" aria-live="polite">
@@ -399,7 +451,7 @@
     <div class="overlay glass zoom">
       <button id="zoomIn" type="button" aria-label="Zoom in" title="Zoom in"><span data-icon="plus"></span></button>
       <button id="zoomOut" type="button" aria-label="Zoom out" title="Zoom out"><span data-icon="minus"></span></button>
-      <button id="fit" type="button" aria-label="Fit graph" title="Fit the whole graph"><span data-icon="fit"></span></button>
+      <button id="fit" type="button" aria-label="Re-centre the graph" title="Re-centre: fit the whole graph"><span data-icon="fit"></span></button>
     </div>
   </section>
 </main>
@@ -417,6 +469,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const svc = s => `svc:${s}`;
 const SEV = { critical: C.critical, high: C.high, medium: C.medium, low: C.medium };
 const SEV_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+const SEV_SHORT = { critical: 'crit', high: 'high', medium: 'med', low: 'low' };
 const FONT = 'Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 
 /** Lucide icons (lucide.dev, ISC licence), inlined so there is no runtime dependency. */
@@ -450,7 +503,11 @@ const ICONS = {
   layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   minus: '<path d="M5 12h14"/>',
-  fit: '<path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/>',
+  fit: '<line x1="2" x2="5" y1="12" y2="12"/><line x1="19" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="5"/><line x1="12" x2="12" y1="19" y2="22"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>',
+  cloud: '<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 };
 /** SVG markup for icon `name`; `cls` "sm" gives the 14px size. */
@@ -480,6 +537,7 @@ let current = null;       // {out, list}: the shown answer, for stepping and the
 let timer = null;         // Play timer
 let pos = -1;             // where the stepper is: -1 none, 0..n-1 a tool step, n the verdict view
 let flowFrame = null;     // failure path animation frame
+let drawTimers = [];      // pending timeouts that draw the failure path edge by edge
 let services = [];        // service names, for search and for linking names in answers
 let home = null;          // {zoom, pan}: the fixed camera for stepping, set after layout
 let shape = '';           // node and edge ids of the drawn graph, to skip redraws when nothing moved
@@ -507,7 +565,7 @@ function plural(n, one, many = one + 's') { return `${n} ${n === 1 ? one : many}
 /** Short version of an alert message for the node's second line, e.g. "CPU 98%". */
 function shortAlert(msg) {
   const head = msg.split(':')[0];
-  return head.length > 20 ? head.slice(0, 19) + '…' : head;
+  return head.length > 36 ? head.slice(0, 35) + "…" : head;
 }
 
 /**
@@ -518,8 +576,13 @@ function dims(text, kind) {
   const lines = String(text).split('\n');
   const longest = Math.max(...lines.map(l => l.length));
   if (kind === 'deploy') return { w: Math.max(60, longest * 8 + 24), h: 26 };
+  if (kind === 'service') return { w: Math.max(110, longest * 7.6 + 50), h: 20 + lines.length * 19 };
   return { w: Math.max(96, longest * 7.6 + 26), h: 20 + lines.length * 19 };
 }
+
+/** Data-URI SVG of Lucide icon `name` in `color`, for a Cytoscape node background. */
+const nodeIcon = (name, color) => 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`);
 
 /** Set a node's drawn label and resize its box to fit. */
 function setDisplay(n, text) { n.data({ display: text, ...dims(text, n.data('kind')) }); }
@@ -533,9 +596,17 @@ function stylesheet() {
         'color': C.text, 'width': 'data(w)', 'height': 'data(h)',
         'background-color': C.panel, 'border-width': 1.5, 'border-color': C.line,
         'shape': 'round-rectangle', 'underlay-opacity': 0, 'underlay-shape': 'round-rectangle' } },
-    { selector: 'node[tier = "data"]', style: { 'shape': 'barrel', 'border-color': C.data } },
-    { selector: 'node[tier = "external"]', style: { 'border-style': 'dashed', 'color': C.muted } },
-    { selector: 'node[tier = "edge"]', style: { 'font-weight': 600 } },
+    // Tier: a tint and an icon at the left of the box (the label is shifted right to make room).
+    { selector: 'node[kind = "service"]', style: {
+        'background-image': nodeIcon('box', '#8b8d98'), 'background-width': 14, 'background-height': 14,
+        'background-position-x': 11, 'background-position-y': '50%', 'background-clip': 'none', 'background-fit': 'none',
+        'text-margin-x': 10 } },
+    { selector: 'node[tier = "edge"]', style: { 'font-weight': 600, 'background-color': C['edge-bg'], 'border-color': '#3a5bc7',
+        'background-image': nodeIcon('globe', '#9eb1ff') } },
+    { selector: 'node[tier = "data"]', style: { 'shape': 'barrel', 'border-color': C.data, 'background-color': C['data-bg'],
+        'background-image': nodeIcon('database', '#b4a4f8') } },
+    { selector: 'node[tier = "external"]', style: { 'border-style': 'dashed', 'color': C.muted,
+        'background-image': nodeIcon('cloud', '#8b8d98') } },
     // Health: border colour and a soft glow from the worst open alert.
     { selector: 'node[health]', style: { 'border-width': 2, 'underlay-opacity': .22, 'underlay-padding': 6 } },
     { selector: 'node[health = "critical"]', style: { 'border-color': C.critical, 'underlay-color': C.critical } },
@@ -559,7 +630,9 @@ function stylesheet() {
     { selector: 'edge.path', style: { 'line-color': C.critical, 'target-arrow-color': C.critical, 'width': 3,
         'line-style': 'dashed', 'line-dash-pattern': [9, 5], 'z-index': 10 } },
     { selector: 'node.impacted', style: { 'border-color': C.high, 'background-color': C['high-bg'] } },
-    { selector: 'node.root', style: { 'underlay-color': C.critical, 'underlay-opacity': .4, 'underlay-padding': 9 } },
+    { selector: 'node.chain', style: { 'underlay-color': C.critical, 'underlay-opacity': .22, 'underlay-padding': 10 } },
+    { selector: 'node.root', style: { 'underlay-color': C.critical, 'underlay-opacity': .45, 'underlay-padding': 11 } },
+    { selector: 'edge.pending', style: { 'line-color': C.line, 'target-arrow-color': C.line, 'opacity': .35 } },
     { selector: 'node.focus', style: { 'border-width': 2.5, 'border-color': C['accent-text'] } },
     { selector: 'node:selected', style: { 'overlay-opacity': 0 } },
   ];
@@ -674,7 +747,8 @@ function wireGraph() {
 /** Clear every state class and per-step label, and remove team/person nodes added for paging. */
 function resetMarks() {
   stopFlow();
-  cy.elements().removeClass('faded context lit muted path root impacted focus');
+  drawTimers.forEach(clearTimeout); drawTimers = [];
+  cy.elements().removeClass('faded context lit muted path pending root impacted focus chain');
   cy.edges().removeStyle('line-dash-offset');
   cy.nodes('[kind = "service"]').forEach(n => {
     const want = n.data('sub') ? `${n.data('base')}\n${n.data('sub')}` : n.data('base');
@@ -687,14 +761,19 @@ function resetMarks() {
  * Fade everything except `lit` nodes. Edges between two lit nodes are lit;
  * edges whose id is in `pathEdges` become the animated failure path.
  */
-function spotlight(lit, { muted = [], pathEdges = [], roots = [], impacted = [], context = [] } = {}) {
+function spotlight(lit, { muted = [], pathEdges = [], roots = [], impacted = [], context = [], chain = [] } = {}) {
   resetMarks();
   const keep = cy.collection();
   lit.forEach(id => keep.merge(cy.getElementById(id)));
   muted.forEach(id => cy.getElementById(id).addClass('muted'));
   cy.elements().not(keep).not(cy.nodes('.muted')).addClass('faded');
   keep.edgesWith(keep).removeClass('faded').addClass('lit');
-  pathEdges.forEach(id => cy.getElementById(id).removeClass('faded lit').addClass('path'));
+  // Draw the failure path one edge at a time, from the root cause outwards
+  // (the way the failure spread), instead of switching it all on at once.
+  const order = [...pathEdges].reverse().map(id => cy.getElementById(id)).filter(e => e.length);
+  order.forEach(e => e.removeClass('faded lit').addClass('pending'));
+  order.forEach((e, k) => drawTimers.push(setTimeout(() => e.removeClass('pending').addClass('path'), 120 + k * 220)));
+  chain.forEach(id => cy.getElementById(id).addClass('chain'));
   roots.forEach(id => cy.getElementById(id).addClass('root'));
   context.forEach(id => cy.getElementById(id).removeClass('faded').addClass('context'));
   impacted.forEach(id => cy.getElementById(id).addClass('impacted'));
@@ -760,7 +839,8 @@ function addPageNodes(service, team, person) {
   if (pid) els.push({ group: 'nodes', data: { id: pid, kind: 'person', display: pLabel, ephemeral: true, ...dims(pLabel) },
                       position: { x: p.x, y: py } },
                     { group: 'edges', data: { id: `${pid}->${tid}`, source: pid, target: tid, rel: 'ON_CALL', ephemeral: true } });
-  cy.add(els);
+  // Two failing services owned by one team share its team and person nodes.
+  cy.add(els.filter(e => !cy.getElementById(e.data.id).length));
   return pid ? [tid, pid] : [tid];
 }
 
@@ -796,7 +876,7 @@ function stepCaption(st) {
     blast_radius: () => `${plural(r.affected.length, 'service')} break if ${r.service} goes down`,
     dependency_path: () => r.path ? `${r.path.join(' → ')} (${r.latency_ms} ms)` : 'no dependency path',
     critical_services: () => `ranked by ${r.metric}: ${r.ranking.slice(0, 3).map(x => x.service).join(', ')}…`,
-    who_to_page: () => `${r.service} is owned by ${r.team}; on call: ${r.on_call || 'nobody'}`,
+    who_to_page: () => `${r.service ? `${r.service} is owned by ${r.team}` : `${r.team} team`}; on call: ${r.on_call || 'nobody'}`,
   }[st.tool];
   return head + esc(say ? say() : '');
 }
@@ -830,7 +910,7 @@ function showStep(out, i) {
       opts.roots = lit.slice(0, 1);
       break;
     case 'who_to_page':
-      lit = [svc(r.service)];
+      lit = r.service ? [svc(r.service)] : [];  // a team name was asked for
       break;
   }
   const keep = spotlight(lit, opts);
@@ -883,15 +963,17 @@ function showAnswer() {
     const d = `deploy:${s.root_cause.service}@${s.root_cause.version}`;
     lit.push(d); roots.push(d); pathEdges.push(`${d}->${svc(s.root_cause.service)}`);
   }
-  const keep = spotlight(lit, { muted: s.unrelated.map(svc), pathEdges, roots, context });
-  if (s.page) {
-    const ids = addPageNodes(s.page.service, s.page.team, s.page.on_call);
+  const keep = spotlight(lit, { muted: s.unrelated.map(svc), pathEdges, roots, context, chain: (s.path || []).map(svc) });
+  const pages = s.no_cause && s.pages?.length ? s.pages : (s.page ? [s.page] : []);
+  pages.forEach(p => {
+    const ids = addPageNodes(p.service, p.team, p.on_call);
     ids.forEach(id => keep.merge(cy.getElementById(id)));
-    keep.connectedEdges('[?ephemeral]').removeClass('faded').addClass('lit');
-  }
-  const cause = s.root_cause ? `${s.root_cause.service} ${s.root_cause.version} by ${s.root_cause.by}` : '';
-  setCaption(esc([cause && `cause: ${cause}`,
-    s.path && `path: ${s.path.join(' → ')}`, s.page && `page ${s.page.on_call || s.page.team}`].filter(Boolean).join(' · ')));
+  });
+  if (pages.length) keep.connectedEdges('[?ephemeral]').removeClass('faded').addClass('lit');
+  const cause = s.root_cause ? `cause: ${s.root_cause.service} ${s.root_cause.version} by ${s.root_cause.by}`
+    : s.no_cause ? 'no recent deploy explains it' : '';
+  setCaption(esc([cause, s.path && `path: ${s.path.join(' → ')}`,
+    pages.length && `page ${pages.map(p => p.on_call || p.team).join(', ')}`].filter(Boolean).join(' · ')));
   pos = n; updateStepper();
   goHome();
 }
@@ -1030,6 +1112,22 @@ function firstLine(out) {
   return line.length > 220 ? line.slice(0, 217) + '…' : line;
 }
 
+/**
+ * The page rows for the verdict card: summary.pages merged by team and on-call
+ * when no root cause was found ("cartservice, emailservice" under one Omar
+ * Haddad row), else just summary.page.
+ */
+function cardPages(s) {
+  if (!(s.no_cause && s.pages?.length)) return s.page ? [s.page] : [];
+  const rows = [];
+  for (const p of s.pages) {
+    const same = rows.find(r => r.team === p.team && r.on_call === p.on_call);
+    if (same) same.service = [same.service, p.service].filter(Boolean).join(', ');
+    else rows.push({ ...p });
+  }
+  return rows;
+}
+
 /** The latest successful result of tool `name`, or undefined. */
 const lastResult = (out, name) => [...out.steps].reverse().find(st => st.tool === name && !st.result?.error)?.result;
 
@@ -1040,14 +1138,21 @@ const lastResult = (out, name) => [...out.steps].reverse().find(st => st.tool ==
  */
 function verdictHtml(out) {
   const s = out.summary;
-  let kind, head, sub = '', rows = '';
+  let kind, head, sub = '', rows = '', topCls = '';
   const br = lastResult(out, 'blast_radius'), crit = lastResult(out, 'critical_services');
   if (s.root_cause) {
     const rc = s.root_cause;
     const ev = out.timeline.find(e => e.kind === 'deploy' && e.service === rc.service && e.text.includes(rc.version));
-    kind = `<div class="kind cause">${icon('commit', 'sm')}Root cause</div>`;
+    kind = `<div class="kind cause">${icon('commit', 'sm')}Root cause</div>`; topCls = ' cause';
     head = `<div class="headline">${esc(rc.service)} <span class="ver">${esc(rc.version)}</span></div>`;
     sub = `Deployed by ${esc(rc.by)}${ev ? ` · ${ev.minutes_ago} min ago` : ''}`;
+  } else if (s.no_cause) {
+    // "What broke?" with no deploy to blame: say so. A blast_radius call made
+    // along the way is evidence here, not the verdict.
+    const failing = (s.pages || []).map(p => p.service).filter(Boolean);
+    kind = `<div class="kind">${icon('help', 'sm')}No root cause found</div>`;
+    head = `<div class="headline">No recent deploy explains it</div>`;
+    sub = failing.length ? `Checked ${failing.map(x => pill(x, 'bad')).join(' ')} and everything on ${failing.length > 1 ? 'their' : 'its'} dependency chain` : '';
   } else if (br) {
     kind = `<div class="kind">${icon('network', 'sm')}Blast radius</div>`;
     head = `<div class="headline">${plural(br.affected.length, 'service')} break</div>`;
@@ -1072,23 +1177,39 @@ function verdictHtml(out) {
       + s.path.map((x, k) => pill(x, k === s.path.length - 1 && s.root_cause ? 'bad' : '')).join(`<span class="arrow">${icon('arrow', 'sm')}</span>`)
       + `</div></div>`;
   }
-  const ev = out.timeline.filter(e => e.kind === 'alert' && e.related)
+  // No root cause: only the failing services' own alerts. A caller's alert
+  // (checkoutservice calls cartservice) may have another cause entirely.
+  const own = s.no_cause ? new Set((s.pages || []).map(p => p.service)) : null;
+  const ev = out.timeline.filter(e => e.kind === 'alert' && e.related && (!own || own.has(e.service)))
     .sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9) || a.minutes_ago - b.minutes_ago);
-  if (ev.length && !br && !crit) {
-    rows += `<div class="vrow"><div class="section-label">Evidence</div><div class="evidence">`
-      + ev.slice(0, 4).map(e => `<div class="ev"><span class="dot" style="background:${SEV[e.severity] || C.faint}"></span>`
+  // With a root cause, the alerts on its chain are the evidence even when
+  // blast_radius ran too (rollback questions); without one, the blast radius
+  // card above already lists them.
+  if (ev.length && !crit && (s.root_cause || s.no_cause || !br)) {
+    const label = s.root_cause && s.rollback ? 'Should clear after rollback' : 'Evidence';
+    rows += `<div class="vrow"><div class="section-label">${label}</div><div class="evidence">`
+      + ev.slice(0, 4).map(e => `<div class="ev"><span class="sev" style="--c:${SEV[e.severity] || C.faint}">${esc(SEV_SHORT[e.severity] || e.severity)}</span>`
         + `${pill(e.service)}<span class="msg">${esc(e.text)}</span><span class="ago">${e.minutes_ago}m</span></div>`).join('')
       + `</div></div>`;
   }
   if (s.unrelated.length) {
     rows += `<div class="vrow"><div class="section-label">Not related</div><div class="chain">${s.unrelated.map(x => pill(x, 'dim')).join('')}</div></div>`;
   }
-  if (s.page) {
-    rows += s.page.on_call
-      ? `<div class="page"><span class="bell">${icon('bell', 'sm')}</span><div><b>Page ${esc(s.page.on_call)}</b><small>${esc(s.page.team)} team, on call for ${esc(s.page.service)}</small></div></div>`
-      : `<div class="page none"><span class="bell">${icon('bell', 'sm')}</span><div><b>Nobody on call</b><small>${esc(s.page.team)} team owns ${esc(s.page.service)}</small></div></div>`;
-  }
-  return `<div class="verdict"><div class="top">${kind}${head}${sub ? `<div class="subline">${sub}</div>` : ''}</div>${rows}</div>`;
+  // One page row per owner when no single cause ties the failing services
+  // together; services with the same team and on-call share a row.
+  const pages = cardPages(s);
+  pages.forEach((p, k) => {
+    rows += p.on_call
+      ? `<button class="page" type="button" data-page="${k}" title="Copy a page message for ${esc(p.on_call)}"><span class="bell">${icon('bell', 'sm')}</span>`
+        + `<div><b>Page ${esc(p.on_call)}</b><small>${esc(p.team)} team${p.service ? `, on call for ${esc(p.service)}` : ', on call'}</small></div>`
+        + `<span class="go">${icon('copy', 'sm')}Copy page</span></button>`
+      : `<div class="page none"><span class="bell">${icon('bell', 'sm')}</span><div><b>Nobody on call</b><small>${p.service ? `${esc(p.team)} team owns ${esc(p.service)}` : `${esc(p.team)} team`}</small></div></div>`;
+  });
+  const notice = s.missing?.length
+    ? `<div class="notice">${icon('alert', 'sm')}<span>Not in the graph: <b>${s.missing.map(esc).join(', ')}</b>. `
+      + `Anything below is about what the graph does have.</span></div>`
+    : '';
+  return `<div class="verdict">${notice}<div class="top${topCls}">${kind}${head}${sub ? `<div class="subline">${sub}</div>` : ''}</div>${rows}</div>`;
 }
 
 /**
@@ -1116,6 +1237,9 @@ function checkTag(out) {
   if (out.provider === 'rules') return `<span class="tag">${icon('list', 'sm')}Built from tool rows</span>`;
   if (ck.by_rules) return `<span class="tag warn">${icon('alert', 'sm')}Model failed the check · rules answer</span>`;
   if (ck.retried) return `<span class="tag warn">${icon('checkCircle', 'sm')}Checked · fixed on retry</span>`;
+  // No tool ran, so there were no graph facts to check the answer against.
+  if (!out.steps.length) return `<span class="tag warn" title="The model answered without querying the graph">`
+    + `${icon('alert', 'sm')}No graph query · not checked</span>`;
   return `<span class="tag ok">${icon('checkCircle', 'sm')}Checked against the graph</span>`;
 }
 
@@ -1123,10 +1247,10 @@ function checkTag(out) {
 function stepsHtml(out) {
   return out.steps.map((st, i) => {
     const args = Object.values(st.args || {}).join(', '), err = st.result?.error;
-    return `<li data-i="${i}" class="${err ? 'err' : ''}"><span class="st">${icon(err ? 'xCircle' : 'checkCircle', 'sm')}</span>`
+    return `<li data-i="${i}" style="--i:${i}" class="${err ? 'err' : ''}"><span class="st">${icon(err ? 'xCircle' : 'checkCircle', 'sm')}</span>`
       + `<span class="tool">${esc(st.tool)}<span class="args">(${esc(args)})</span></span>`
       + `<span class="meta num">${esc(stepResult(st))} · ${st.ms} ms</span></li>`;
-  }).join('') + `<li data-i="${out.steps.length}" class="final"><span class="st">${icon('flag', 'sm')}</span>`
+  }).join('') + `<li data-i="${out.steps.length}" style="--i:${out.steps.length}" class="final"><span class="st">${icon('flag', 'sm')}</span>`
     + `<span class="tool">verdict</span><span class="meta num">${out.seconds}s total</span></li>`;
 }
 
@@ -1203,25 +1327,44 @@ function renderResult(entry) {
   inv.querySelectorAll('[data-copy]').forEach(b => b.onclick = () =>
     copyText(b.dataset.copy === 'all' ? out.queries.join(';\n\n') : out.queries[+b.dataset.copy], b));
   inv.querySelectorAll('[data-h]').forEach(b => b.onclick = () => renderResult(history[+b.dataset.h]));
+  const pages = cardPages(out.summary);
+  inv.querySelectorAll('[data-page]').forEach(b => b.onclick = () => copyPage(q, out, pages[+b.dataset.page], b));
   stopReplay();
   current = { out, list }; pos = -1;
   $('panel').scrollTop = 0;
   replay();
 }
 
-/** Placeholder while the agent works: the question, a skeleton verdict and an elapsed timer. */
+/** Placeholder while the agent works: the question and one card saying what is happening. */
 function renderLoading(q) {
   $('intro')?.remove();
   const inv = $('inv');
   inv.hidden = false;
   inv.innerHTML = questionHtml(q)
-    + `<div class="verdict"><div class="top"><div class="skel" style="width:30%;margin-bottom:10px"></div>`
-    + `<div class="skel" style="width:70%;height:18px;margin-bottom:8px"></div><div class="skel" style="width:50%"></div></div></div>`
-    + `<div class="block" style="margin-top:18px"><div class="section-label">Investigation</div><ol class="steps loading">`
-    + `<li><span class="spinner"></span><span>Asking the model and querying the graph…</span><span class="meta num" id="elapsed">0s</span></li></ol></div>`;
+    + `<div class="working"><div class="row"><span class="spinner"></span>Investigating…<span class="num" id="elapsed">0s</span></div>`
+    + `<ul><li>The model picks read-only graph queries, one at a time</li>`
+    + `<li>Its answer is checked against what the graph returned</li>`
+    + `<li>Usually 5–30 s; up to 90 s if a model is busy and the next one is tried</li></ul></div>`;
   const t0 = Date.now();
   const tick = setInterval(() => { const el = $('elapsed'); if (el) el.textContent = `${Math.round((Date.now() - t0) / 1000)}s`; else clearInterval(tick); }, 500);
   return () => clearInterval(tick);
+}
+
+/**
+ * Copy a ready-to-send page message (who, what broke, the cause and the path)
+ * and flash "Copied" in the Page button. `page` is the {service, team, on_call}
+ * this button pages (one of summary.pages when several services failed).
+ */
+async function copyPage(q, out, page, btn) {
+  const s = out.summary, rc = s.root_cause;
+  const msg = [`Paging ${page.on_call} (${page.team} on call${page.service ? ` for ${page.service}` : ''}).`,
+    `Incident: ${q}`,
+    rc && `Likely cause: ${rc.service} ${rc.version}, deployed by ${rc.by}.`,
+    s.path && `Failure path: ${s.path.join(' -> ')}.`,
+    'Found by Incident Detective from the service graph.'].filter(Boolean).join('\n');
+  const go = btn.querySelector('.go');
+  await copyText(msg, go);
+  btn.classList.add('done'); setTimeout(() => btn.classList.remove('done'), 1400);
 }
 
 /** Copy `text` to the clipboard and flash "Copied" on `btn`. Falls back to execCommand off HTTPS. */

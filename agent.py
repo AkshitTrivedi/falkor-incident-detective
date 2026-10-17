@@ -27,6 +27,7 @@ Usage:
   python agent.py "checkoutservice is throwing 5xx errors, what broke?"
   LLM_PROVIDER=gemini python agent.py "which services are chokepoints?"
 """
+import difflib
 import json
 import logging
 import os
@@ -108,8 +109,9 @@ SYSTEM_PROMPT = """You are Incident Detective, an on-call assistant for a micros
 You investigate incidents ONLY with the provided tools, which query a graph of services,
 dependencies, deploys, alerts, teams and on-call people. Never invent services, people, teams,
 versions or numbers: every name and figure in your answer must appear in a tool result.
-If the question names a service, person, team or version the graph does not have, say plainly
-that it is not in the graph. If no tool can answer (for example CPU or memory metrics), say so.
+If the question names a service, person, team or version the graph does not have, start your
+answer with a sentence that names it and says it is not in the graph ("There is no SRE team in
+the graph."). If no tool can answer (for example CPU or memory metrics), say so.
 Put your whole answer in your final message, not next to a tool call.
 
 For "what broke?" questions:
@@ -117,22 +119,25 @@ For "what broke?" questions:
 2. Call dependencies on the failing service to find what it relies on.
 3. A recent deploy to a service the failing one depends on is the prime suspect. Confirm the
    link with dependency_path.
-4. Alerts on services that are on that path are symptoms of the same incident. An alert on a
-   service that is NOT in the dependencies list is unrelated: it cannot affect the failing service.
+4. Alerts on services that are on that path are symptoms of the same incident. Alerts on
+   services that call the failing service (blast_radius) are its effects. An alert on a service
+   with no dependency path to or from the failing service is unrelated.
 5. Call who_to_page on the root-cause service.
 
-Final answer format (plain text, short):
+Final answer format for "what broke?" questions (plain text, short):
 Root cause: <service and change, with who deployed it and when>
 Evidence: <the dependency path and the alerts along it>
 Unrelated: <alerts on services outside the dependencies list, if any>
-Page: <team and on-call person>"""
+Page: <team and on-call person>
+Other questions (owners, on-call, dependencies, blast radius) get a short plain answer
+without these labels."""
 
 # Sent after an answer fails verify.check_answer(); {problems} is one per line.
 RETRY_PROMPT = """Your answer states things the tool results do not support:
 {problems}
 Rewrite the answer in the same format using only services, people, teams, versions and numbers
 that appear in the tool results above. If something the question names is not in the graph,
-say so plainly. Do not call any more tools."""
+start with a sentence that names it and says it is not in the graph. Do not call any more tools."""
 
 # OpenAI function-calling schemas for tools.TOOLS. Descriptions tell the LLM
 # when to use each tool; names must match the functions in tools.py.
@@ -174,7 +179,8 @@ TOOL_SCHEMAS = [
             "required": ["metric"]}}},
     {"type": "function", "function": {
         "name": "who_to_page",
-        "description": "Owning team and current on-call person for a service.",
+        "description": "Owning team and current on-call person for a service. "
+                       "A team name (e.g. Payments) also works.",
         "parameters": {"type": "object", "properties": {"service": _SERVICE},
                        "required": ["service"]}}},
 ]
@@ -315,6 +321,11 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
     deadline = started + QUESTION_DEADLINE_S
     fallbacks = []
     log.info("question: %r", question)
+    if not pinned and diagnose.needs_no_model(g, question):
+        # "Delete all alerts", "hello there": nothing to look up, so the rules
+        # reply at once (see diagnose.needs_no_model).
+        log.info("no model needed; answering with the rules")
+        return _rules_result(g, question, fallbacks, started)
     for i, (p, m) in enumerate(chain):
         is_last = i == len(chain) - 1
         if time.time() >= deadline:
@@ -342,6 +353,11 @@ def investigate(question, g=None, provider=None, model=None, max_steps=MAX_STEPS
 
     # Every model failed or time ran out: answer from the graph with the rules.
     log.warning("no model answered; using the rules diagnosis")
+    return _rules_result(g, question, fallbacks, started)
+
+
+def _rules_result(g, question, fallbacks, started):
+    """investigate()'s result, answered by diagnose.rule_answer() (provider "rules")."""
     rules = diagnose.rule_answer(g, question)
     return {"answer": rules["answer"], "steps": rules["steps"],
             "queries": _queries(rules["steps"]), "path": rules["path"],
@@ -429,6 +445,7 @@ def _investigate_once(question, g, provider, model, max_steps, fail_fast, deadli
                  "retried": False, "by_rules": True}
         answer, rule_steps, rule_path = _rules(g, question, steps)
     else:
+        answer = _drop_empty_sections(answer)
         answer, check, rule_steps, rule_path = _check(
             question, answer, steps, messages, g, client, model, tokens, deadline)
         llm_calls += check["retried"]
@@ -445,6 +462,28 @@ DRAFT_MIN_CHARS = 200
 # Section labels other than "Page" (the part a fragment final message tends to keep).
 _BODY_LABEL = verify._LABEL.format("root cause|evidence|unrelated")
 _PAGE_LABEL = verify._LABEL.format("page")
+
+
+# A section line with nothing in it: "Root cause: N/A — this is an ownership question".
+_EMPTY_SECTION = re.compile(r"^[ \t>*_-]*(?:root cause|evidence|unrelated|page)[*_]*\s*:[*_]*\s*"
+                            r"(?:n/?a|none needed|not applicable)\b.*(?:\n|$)", re.I | re.M)
+
+
+def _drop_empty_sections(answer):
+    """Remove "Root cause: N/A" style lines a model adds to a non-incident answer.
+
+    Live test, Oct 16 (StepFun, "Who owns adservice and who is on call for
+    it?"): four "N/A" lines came before the real one-line answer. "Unrelated:
+    none" is kept; it says something.
+
+    Args:
+        answer: The model's answer.
+
+    Returns:
+        str: The answer without those lines; unchanged if that would leave nothing.
+    """
+    kept = _EMPTY_SECTION.sub("", answer).strip()
+    return kept or answer
 
 
 def _merge_draft(draft, final):
@@ -562,7 +601,7 @@ def _check(question, answer, steps, messages, g, client, model, tokens, deadline
     problems = verify.check_answer(answer, steps, question, vocab)
     check = {"problems": problems, "retried": False, "by_rules": False}
     if not problems:
-        return answer, check, [], None
+        return _missing_notes(question, answer, vocab) + answer, check, [], None
 
     log.warning("  check failed: %s; asking the model to fix it", "; ".join(problems))
     check["retried"] = True
@@ -577,13 +616,42 @@ def _check(question, answer, steps, messages, g, client, model, tokens, deadline
         fixed = None
     if fixed and not (still := verify.check_answer(fixed, steps, question, vocab)):
         log.info("  retry passed the check")
-        return fixed, check, [], None
+        return _missing_notes(question, fixed, vocab) + fixed, check, [], None
     if fixed:
         log.warning("  retry still failed the check: %s", "; ".join(still))
     log.warning("  using the rules diagnosis")
     check["by_rules"] = True
     answer, rule_steps, rule_path = _rules(g, question, steps)
     return answer, check, rule_steps, rule_path
+
+
+def _missing_notes(question, answer, vocab):
+    """Lines saying which names from the question are not in the graph.
+
+    verify.check_answer() accepts "Sarah Jenkins is not on call" for "Is Sarah
+    Jenkins on call?" (live test, Oct 16), which is true but lets the reader
+    think she exists. Each name the answer does not plainly call missing gets
+    the rules' own line ("There is no person named Sarah Jenkins in the
+    graph."), so model and rules answers say it the same way.
+
+    Args:
+        question: The user's question.
+        answer: A model answer that passed verify.check_answer().
+        vocab: verify.graph_vocabulary().
+
+    Returns:
+        str: One line per such name, each ending in a newline; "" if none.
+    """
+    plain = re.sub(r"[`*]", "", answer.lower().replace("\u2019", "'"))
+    notes = ""
+    for kind, name in verify.unknown_names(question, vocab):
+        phrases = verify.NO_DEPLOY if kind == "version" else verify.NOT_FOUND
+        if not verify._called_out(plain, name, phrases):
+            close = (difflib.get_close_matches(name, sorted(vocab["services"]), n=1, cutoff=0.8)
+                     if kind == "service" else [])
+            notes += (f"There is no {diagnose._KIND[kind].format(diagnose._as_written(question, name))}"
+                      " in the graph." + (f" Did you mean {close[0]}?" if close else "") + "\n")
+    return notes
 
 
 if __name__ == "__main__":
