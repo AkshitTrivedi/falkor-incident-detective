@@ -285,6 +285,13 @@ def summarize(out, vocab, question=""):
     # The answer's verdict wins for a service a tool was only asked about,
     # but not for one the tools put on the chain or the blamed deploy's.
     keep = chain | ({root["service"]} if root else set())
+    # Anything that calls the blamed service, or that it calls, is on the
+    # incident chain even if no tool returned it (live F4: checkoutservice
+    # was shown as unrelated to a fraud-check root cause).
+    reach = vocab.get("reach") or {}
+    if root:
+        keep |= reach.get(root["service"], set())
+        keep |= {svc for svc, deps in reach.items() if root["service"] in deps}
     unrelated = sorted(named - keep)
     related -= set(unrelated)
     # Names in the question the graph lacks, so the card can say so up front

@@ -379,8 +379,31 @@ def test_empty_reply_with_no_tool_is_flagged(answer):
     ("Root cause: fraud-check v3.1.0 deployed by Daniel Okafor.\nPage: Payments team.", True),
     ("Yes, roll back fraud-check v3.1.0. Root cause: fraud-check v3.1.0.", False),
     ("Rolling back fraud-check v3.1.0 should clear the payments-db alert.", False),
+    # Live Oct 16 (Nemotron): the "no" in "(no index)" once counted as an answer.
+    ("Root cause: fraud-check v3.1.0 runs a slow query on payments-db (no index).\n"
+     "Page: Payments team.", True),
+    ("No. fraud-check v3.1.0 is not on the failing chain.", False),
 ])
 def test_rollback_question_needs_yes_or_no(answer, flagged):
     """Rule 21, live Oct 16 (Nemotron): root cause given, rollback never answered."""
     problems = verify.check_answer(answer, STEPS, "Should we roll back fraud-check v3.1.0?", VOCAB)
     assert any("roll back" in p for p in problems) == flagged
+
+
+@pytest.mark.parametrize("unrelated,flagged", [
+    # Live Oct 16 (StepFun, F4): checkoutservice calls paymentservice -> fraud-check.
+    ('checkoutservice "HTTP 5xx rate 23%": checkoutservice is not in paymentservice\'s list.', True),
+    ("payments-db CPU 98%, a separate issue.", True),  # fraud-check calls payments-db
+    # The subject is adservice; checkoutservice is only named to explain it (live A1).
+    ("adservice: adservice is not in checkoutservice's dependency list.", False),
+    # Saved StepFun story C: a second sentence in the item names checkoutservice first.
+    ("adservice (medium). There is no dependency path between checkoutservice and adservice.",
+     False),
+    ("none", False),
+])
+def test_unrelated_must_not_list_the_root_cause_chain(unrelated, flagged):
+    """Rule 5b: a service on the blamed deploy's chain is not unrelated."""
+    answer = ("Root cause: fraud-check v3.1.0, deployed by Daniel Okafor.\n"
+              f"Unrelated: {unrelated}\nPage: Payments team, on-call Priya Nair.")
+    problems = verify.check_answer(answer, STEPS, "paymentservice p99 latency is 4.2s, why?", REACH)
+    assert any("dependency chain of the root cause" in p for p in problems) == flagged

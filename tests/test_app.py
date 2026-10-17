@@ -205,3 +205,15 @@ def test_summary_blames_nothing_when_the_cause_line_clears_the_deploy(g):
            "steps": r["steps"], "path": None}
     s = app.summarize(out, verify.graph_vocabulary(g), "adservice cache miss rate is high. What broke?")
     assert s["root_cause"] is None and s["no_cause"]
+
+
+def test_summary_keeps_the_root_cause_chain_off_unrelated(g):
+    """F4, live Oct 16 (StepFun): checkoutservice was shown as unrelated to a
+    fraud-check root cause, though it calls paymentservice -> fraud-check."""
+    steps = [{"tool": "recent_changes", "args": {}, "result": tools.recent_changes(g)}]
+    out = {"answer": "Root cause: fraud-check v3.1.0, deployed by Daniel Okafor.\n"
+                     "Unrelated:\n- checkoutservice \"HTTP 5xx rate 23%\"\n"
+                     "- adservice \"ad inventory cache miss rate high\"",
+           "steps": steps, "path": None}
+    s = app.summarize(out, verify.graph_vocabulary(g), "paymentservice p99 latency is 4.2s, why?")
+    assert s["unrelated"] == ["adservice"]

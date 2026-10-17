@@ -622,6 +622,24 @@ def check_answer(answer, steps, question, vocab):
                 problems.append(f"root cause {svc} has no dependency path to or from "
                                 f"{', '.join(sorted(asked))}")
 
+    # Rule 5b: "Unrelated" must not list an alerting service on the blamed
+    # deploy's chain (it calls that service or that service calls it). Live
+    # test, Oct 16 (StepFun): for paymentservice latency it called the
+    # checkoutservice 5xx unrelated, though checkoutservice calls paymentservice
+    # -> fraud-check. Only the first service of each item (a line, or a part
+    # between semicolons) is its subject, so "adservice: not on the
+    # checkoutservice path. There is no path between checkoutservice and
+    # adservice." lists adservice alone.
+    if reach is not None and blamed and not re.match(_NO_CAUSE, cause):
+        incident = set().union(blamed, *[reach.get(b, set()) for b in blamed])
+        incident |= {svc for svc, deps in reach.items() if deps & blamed}
+        listed = {_first_named(item, vocab["services"])
+                  for item in re.split(r"\n|;\s", _section(a, "unrelated"))}
+        alerting = facts["alerting"] | vocab.get("alerting", set())
+        for svc in sorted((listed & incident & alerting) - blamed):
+            problems.append(f"unrelated lists {svc}, but it is on the dependency chain of the "
+                            f"root cause {', '.join(sorted(blamed))}")
+
     # Rule 18: "X depends on Y" must match the graph's direction. Live test,
     # Oct 16 (Gemini): "Does payments-db depend on checkoutservice?" -> "Yes",
     # read off a path that runs checkoutservice -> paymentservice -> payments-db.
@@ -652,8 +670,11 @@ def check_answer(answer, steps, question, vocab):
 
     # Rule 21: "should we roll back X?" needs a yes or a no. Live test, Oct 16
     # (Nemotron) gave the root cause and never said whether to roll back.
+    # A bare "no" anywhere is not an answer: "slow query (no index)" passed
+    # this rule once, so yes/no only counts at the start of a sentence.
     if (re.search(r"\b(?:should|do|can) (?:we|i) (?:roll ?back|revert)\b", q)
-            and not re.search(r"\b(?:yes|no|roll(?:ing)? ?back|revert\w*|don't|do not)\b", plain)):
+            and not re.search(r"(?:^|[.:!?\n]\s*)(?:yes|no)\b|\broll(?:ing)? ?back|\brevert\w*",
+                              plain, re.M | re.I)):
         problems.append("the question asks whether to roll back, but the answer does not say "
                         "yes or no")
 
@@ -665,6 +686,17 @@ def check_answer(answer, steps, question, vocab):
         problems.append("'most critical' needs the betweenness ranking, but only "
                         f"{', '.join(sorted(metrics))} was used")
     return problems
+
+
+def _first_named(text, services):
+    """Rule 5b: the service named first in `text`, or None.
+
+    An "Unrelated" item names its subject first and may name others only to
+    explain it ("adservice: no path to or from checkoutservice").
+    """
+    hits = [(m.start(), n) for n in services
+            for m in [re.search(rf"(?<![\w-]){re.escape(n)}(?![\w-])", text)] if m]
+    return min(hits)[1] if hits else None
 
 
 def _denied(text, name, kind):
