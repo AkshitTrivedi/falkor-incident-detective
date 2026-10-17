@@ -2,18 +2,22 @@
 <!--
   Incident Detective UI. One page, no build step; served by app.py at "/".
 
-  Left:  the investigation. A verdict card built from the structured summary
-         (root cause, failure path, evidence, who to page), the model that
-         answered, the tool steps with a step-through control, the timeline,
-         and (collapsed) the model's full text and the Cypher that ran.
+  Left:  the investigation, in four tabs so nothing is shown twice:
+           Answer   - verdict card from the structured summary (root cause,
+                      failure path, evidence, who to page), the model that
+                      answered, and (collapsed) the model's full text;
+           Steps    - each tool call; click one to see it on the graph;
+           Timeline - deploys and alerts in the last hour;
+           Cypher   - the queries that ran, each copyable and runnable.
   Right: the live graph from /api/graph, drawn with Cytoscape.js and a layered
-         dagre layout (callers on the left, what they call on the right).
+         dagre layout (callers on the left, what they call on the right). The
+         step player (◀ ▶ Play and a caption) sits at the bottom of the graph.
 
   Visual system (see the research notes in DESIGN_NOTES.md):
     * Neutral slate UI (Radix Colors slate-dark), one indigo accent for actions
       and selection; red / orange / amber are kept for health and failure only.
     * Geist and Geist Mono, four text sizes (12/13/15/20); hierarchy by weight
-      and colour, not size. Lucide icons inlined as SVG, no emoji.
+      and colour, not size. Lucide icons inlined as SVG; the 🕵️ logo is the one emoji.
     * Graph: node kind is shown by shape, health by border colour and glow;
       an answer fades everything off the failure chain instead of hiding it.
 
@@ -61,9 +65,13 @@
   /* Header */
   header { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 48px; flex: none;
            border-bottom: 1px solid var(--border); background: var(--panel); }
-  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; white-space: nowrap; }
-  .logo { width: 26px; height: 26px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; color: #fff; }
-  .by-falkor { color: var(--faint); font-size: 12px; font-weight: 400; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; white-space: nowrap; margin: 0; letter-spacing: -.01em; }
+  .brand .logo { font-size: 20px; line-height: 1; }
+  .brand .accent { color: var(--accent-text); }
+  .by-falkor { color: var(--faint); font-size: 12px; font-weight: 400; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-left: 4px; letter-spacing: 0; }
+  .stat { color: var(--muted); white-space: nowrap; }
+  .stat b { color: var(--text); font-weight: 600; }
+  .stat .sep { color: var(--faint); margin: 0 6px; }
   .status { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted);
             overflow-x: auto; scrollbar-width: none; }
   .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px;
@@ -145,7 +153,7 @@
   .svc.dim { color: var(--faint); border-style: dashed; }
 
   /* Meta row: model badge and check */
-  .metarow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 18px; font-size: 12px; }
+  .metarow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 6px; font-size: 12px; }
   .tag { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 6px;
          padding: 2px 8px; color: var(--muted); background: var(--panel); white-space: nowrap; }
   .tag.ok { color: var(--ok-text); border-color: var(--ok-line); }
@@ -161,12 +169,20 @@
   .model .menu .win { color: var(--ok-text); }
   .model .menu .why { color: var(--faint); }
 
-  /* Steps with the step-through control */
+  /* Tabs: Answer / Steps / Timeline / Cypher */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 0 0 14px; }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 8px 10px;
+                 color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+  .tabs .n { font-size: 11px; color: var(--faint); background: var(--panel-2); border-radius: 999px; padding: 0 6px; }
+  .pane[hidden] { display: none; }
+  .pane-note { color: var(--faint); font-size: 12px; margin: 0 0 10px; }
+
+  /* Steps */
   .block { margin-bottom: 18px; }
-  .scrub { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-  .scrub .pos { min-width: 64px; text-align: center; color: var(--muted); font-size: 12px; }
   .steps { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
-  .steps li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; border-top: 1px solid var(--border); }
+  .steps li { display: flex; align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer; border-top: 1px solid var(--border); }
   .steps li:first-child { border-top: 0; }
   .steps li:hover { background: var(--panel-2); }
   .steps li.active { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
@@ -201,7 +217,7 @@
   .answer ul { margin: 0 0 8px; padding-left: 18px; color: var(--muted); }
   .answer .label { color: var(--text); font-weight: 600; margin-right: 4px; }
   .answer code { background: var(--panel-2); border-radius: 4px; padding: 0 4px; font: 12px var(--mono); }
-  .qhead { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--faint); }
+  .qhead { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--faint); margin-bottom: 4px; }
   .qhead span { flex: 1; }
   .qbox { position: relative; }
   pre { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 10px 70px 10px 10px;
@@ -249,11 +265,14 @@
   .tb { height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted); font-size: 12px; }
   .tb:hover { color: var(--text); border-color: var(--border-2); }
   .gtools .right { margin-left: auto; }
-  .stepchip { left: 50%; bottom: 14px; transform: translateX(-50%); padding: 6px 12px; font-size: 12px; color: var(--muted);
-              max-width: min(620px, calc(100% - 200px)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .stepchip:empty { display: none; }
-  .stepchip .k { color: var(--accent-text); font-weight: 600; margin-right: 6px; }
-  .stepchip code { font: 12px var(--mono); color: var(--text); }
+  .player { left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 4px;
+            font-size: 12px; color: var(--muted); width: max-content; max-width: calc(100% - 260px); }
+  .player[hidden] { display: none; }
+  .player .pos { min-width: 54px; text-align: center; color: var(--text); font-weight: 500; }
+  .player .cap { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px 0 10px;
+                 margin-left: 4px; border-left: 1px solid var(--border); }
+  .player .cap:empty { display: none; }
+  .player code { font: 12px var(--mono); color: var(--text); }
   .zoom { right: 12px; bottom: 12px; display: flex; flex-direction: column; overflow: hidden; }
   .zoom button { width: 32px; height: 32px; display: grid; place-items: center; background: none; border: 0; color: var(--muted); cursor: pointer; }
   .zoom button + button { border-top: 1px solid var(--border); }
@@ -300,13 +319,13 @@
     .by-falkor { display: none; }
     .search { width: 160px; }
     .inspector { width: auto; left: 12px; top: auto; bottom: 12px; max-height: 55%; }
-    .stepchip { max-width: calc(100% - 120px); bottom: 56px; }
+    .player { max-width: calc(100% - 24px); bottom: 56px; }
   }
 </style>
 </head>
 <body>
 <header>
-  <div class="brand"><span class="logo" data-icon="activity"></span>Incident Detective <span class="by-falkor">on FalkorDB</span></div>
+  <h1 class="brand"><span class="logo" aria-hidden="true">🕵️</span>Incident <span class="accent">Detective</span><span class="by-falkor">on FalkorDB</span></h1>
   <div class="status" id="status"><span class="chip live"><span class="dot"></span>connecting…</span></div>
 </header>
 <main>
@@ -348,7 +367,13 @@
       <datalist id="svc-list"></datalist>
       <button class="glass tb right" id="showAll" type="button" title="Clear the highlight and show the whole graph"><span data-icon="reset"></span>Reset view</button>
     </div>
-    <div class="overlay glass stepchip" id="caption" aria-live="polite"></div>
+    <div class="overlay glass player" id="player" hidden>
+      <button class="ghost" id="prev" type="button" title="Previous step (← key)" aria-label="Previous step"><span data-icon="left"></span></button>
+      <span class="pos num" id="pos" aria-live="polite"></span>
+      <button class="ghost" id="next" type="button" title="Next step (→ key)" aria-label="Next step"><span data-icon="right"></span></button>
+      <button class="ghost" id="replay" type="button" title="Play the steps"></button>
+      <span class="cap" id="caption" aria-live="polite"></span>
+    </div>
 
     <aside class="overlay glass inspector" id="inspector" aria-live="polite">
       <button class="ghost close" id="closeInspector" aria-label="Close"><span data-icon="x"></span></button>
@@ -480,7 +505,7 @@ function plural(n, one, many = one + 's') { return `${n} ${n === 1 ? one : many}
 /** Short version of an alert message for the node's second line, e.g. "CPU 98%". */
 function shortAlert(msg) {
   const head = msg.split(':')[0];
-  return head.length > 24 ? head.slice(0, 23) + '…' : head;
+  return head.length > 20 ? head.slice(0, 19) + '…' : head;
 }
 
 /**
@@ -490,8 +515,8 @@ function shortAlert(msg) {
 function dims(text, kind) {
   const lines = String(text).split('\n');
   const longest = Math.max(...lines.map(l => l.length));
-  if (kind === 'deploy') return { w: Math.max(56, longest * 7.2 + 22), h: 24 };
-  return { w: Math.max(92, longest * 7.4 + 28), h: 18 + lines.length * 17 };
+  if (kind === 'deploy') return { w: Math.max(60, longest * 8 + 24), h: 26 };
+  return { w: Math.max(96, longest * 7.6 + 26), h: 20 + lines.length * 19 };
 }
 
 /** Set a node's drawn label and resize its box to fit. */
@@ -502,7 +527,7 @@ function stylesheet() {
   return [
     { selector: 'node', style: {
         'label': 'data(display)', 'text-wrap': 'wrap', 'text-valign': 'center', 'text-halign': 'center',
-        'font-size': 13, 'font-family': FONT, 'font-weight': 500, 'line-height': 1.3,
+        'font-size': 14, 'font-family': FONT, 'font-weight': 500, 'line-height': 1.3,
         'color': C.text, 'width': 'data(w)', 'height': 'data(h)',
         'background-color': C.panel, 'border-width': 1.5, 'border-color': C.line,
         'shape': 'round-rectangle', 'underlay-opacity': 0, 'underlay-shape': 'round-rectangle' } },
@@ -515,7 +540,7 @@ function stylesheet() {
     { selector: 'node[health = "high"]', style: { 'border-color': C.high, 'underlay-color': C.high } },
     { selector: 'node[health = "medium"]', style: { 'border-color': C.medium, 'underlay-color': C.medium, 'underlay-opacity': .12 } },
     { selector: 'node[kind = "deploy"]', style: { 'shape': 'tag', 'background-color': C['accent-bg'], 'border-color': C.accent,
-        'color': C['accent-text'], 'font-family': '"Geist Mono", ui-monospace, monospace', 'font-size': 11.5 } },
+        'color': C['accent-text'], 'font-family': '"Geist Mono", ui-monospace, monospace', 'font-size': 13 } },
     { selector: 'node[kind = "team"]', style: { 'background-color': C['panel-2'], 'border-color': C.ok, 'font-weight': 600 } },
     { selector: 'node[kind = "person"]', style: { 'background-color': C['ok-bg'], 'border-color': C.ok, 'border-width': 2, 'font-weight': 600 } },
     { selector: 'edge', style: {
@@ -525,8 +550,8 @@ function stylesheet() {
     { selector: 'edge[rel = "TO"]', style: { 'line-color': C.accent, 'target-arrow-color': C.accent } },
     { selector: 'edge[rel = "OWNS"], edge[rel = "ON_CALL"]', style: { 'line-color': C.ok, 'target-arrow-color': C.ok } },
     // States.
-    { selector: '.faded', style: { 'opacity': .2 } },
-    { selector: '.context', style: { 'opacity': .5 } },
+    { selector: '.faded', style: { 'opacity': .3 } },
+    { selector: '.context', style: { 'opacity': .6 } },
     { selector: 'node.muted', style: { 'opacity': .6, 'border-style': 'dashed', 'border-color': C.faint, 'underlay-opacity': 0, 'color': C.muted } },
     { selector: 'edge.lit', style: { 'line-color': C.faint, 'target-arrow-color': C.faint, 'width': 1.8 } },
     { selector: 'edge.path', style: { 'line-color': C.critical, 'target-arrow-color': C.critical, 'width': 3,
@@ -581,9 +606,9 @@ async function loadGraph() {
   $('svc-list').innerHTML = [...services].sort().map(s => `<option value="${esc(s)}">`).join('');
   $('empty')?.remove();
   const c = data.counts, bad = data.nodes.filter(n => n.health).length;
-  setStatus(true, `<span class="chip"><b class="num">${c.services}</b> services</span>`
-    + `<span class="chip"><b class="num">${c.deploys}</b> deploy${c.deploys === 1 ? '' : 's'} · 1h</span>`
-    + `<span class="chip"><b class="num">${c.alerts}</b> alert${c.alerts === 1 ? '' : 's'} on <b class="num">${bad}</b> ${bad === 1 ? 'service' : 'services'}</span>`);
+  const sep = '<span class="sep">·</span>';
+  setStatus(true, `<span class="stat num"><b>${c.services}</b> services${sep}<b>${c.deploys}</b> ${c.deploys === 1 ? 'deploy' : 'deploys'}`
+    + `${sep}<b>${c.alerts}</b> ${c.alerts === 1 ? 'alert' : 'alerts'} on <b>${bad}</b> ${bad === 1 ? 'service' : 'services'}${sep}last hour</span>`);
 }
 
 /**
@@ -593,7 +618,7 @@ async function loadGraph() {
  */
 function layout() {
   const core = cy.nodes('[kind = "service"]');
-  core.union(core.edgesWith(core)).layout({ name: 'dagre', rankDir: 'LR', nodeSep: 16, rankSep: 70,
+  core.union(core.edgesWith(core)).layout({ name: 'dagre', rankDir: 'LR', nodeSep: 12, rankSep: 40,
     edgeSep: 8, ranker: 'network-simplex', animate: false, fit: false }).run();
   cy.nodes('[kind = "deploy"]').forEach(d => {
     const s = cy.getElementById(svc(d.data('service')));
@@ -608,8 +633,8 @@ function layout() {
  * at the bottom for the team and on-call nodes added when paging.
  */
 function setHome() {
-  cy.fit(cy.nodes('[!ephemeral]'), 28);
-  cy.zoom({ level: Math.min(1.4, cy.zoom() * 0.95), renderedPosition: { x: cy.width() / 2, y: cy.height() * 0.45 } });
+  cy.fit(cy.nodes('[!ephemeral]'), 24);
+  cy.zoom({ level: Math.min(1.4, cy.zoom()), renderedPosition: { x: cy.width() / 2, y: cy.height() * 0.45 } });
   home = { zoom: cy.zoom(), pan: { ...cy.pan() } };
 }
 
@@ -626,7 +651,7 @@ function goHome() {
   cy.animate({ zoom: home.zoom, pan: home.pan, duration: 400, easing: 'ease-in-out-cubic' });
 }
 
-/** Header status chips; `html` is trusted markup built from numbers. */
+/** Header status: the Live dot, then `html` (trusted markup built from numbers). */
 function setStatus(ok, html) {
   $('status').className = 'status ' + (ok ? 'ok' : 'bad');
   $('status').innerHTML = `<span class="chip live"><span class="dot"></span>${ok ? 'Live' : 'Graph offline'}</span>${html}`;
@@ -701,7 +726,7 @@ function frame(eles) {
   cy.animate({ fit: { eles, padding: 70 }, duration: 400, easing: 'ease-in-out-cubic' });
 }
 
-/** Step chip over the graph; `html` is built by callers with esc() on any data. */
+/** Caption in the step player; `html` is built by callers with esc() on any data. */
 function setCaption(html) { $('caption').innerHTML = html; }
 
 // ============================================================================
@@ -726,7 +751,7 @@ function addPageNodes(service, team, person) {
   const tid = `team:${team}`, pid = person ? `person:${person}` : null;
   const p = s.position(), below = s.outerHeight() / 2;
   const ty = freeY(p.x, p.y + below + 40, 35), py = freeY(p.x, ty + 54, 35);
-  const tLabel = `${team} team`, pLabel = `${person} · on call`;
+  const tLabel = `${team} team`, pLabel = `Page ${person}`;
   const els = [{ group: 'nodes', data: { id: tid, kind: 'team', display: tLabel, ephemeral: true, ...dims(tLabel) },
                  position: { x: p.x, y: ty } },
                { group: 'edges', data: { id: `${tid}->${svc(service)}`, source: tid, target: svc(service), rel: 'OWNS', ephemeral: true } }];
@@ -758,10 +783,10 @@ function stepResult(st) {
   }[st.tool]?.() ?? '';
 }
 
-/** Plain-language caption for one step, for the chip over the graph. */
-function stepCaption(st, i, n) {
+/** Plain-language caption for one step, shown in the player under the graph. */
+function stepCaption(st) {
   const r = st.result || {}, args = Object.values(st.args || {}).join(', ');
-  const head = `<span class="k">Step ${i + 1}/${n}</span><code>${esc(st.tool)}(${esc(args)})</code> · `;
+  const head = `<code>${esc(st.tool)}(${esc(args)})</code> · `;
   if (r.error) return head + `<span style="color:var(--critical-text)">${esc(r.error)}</span>`;
   const say = {
     recent_changes: () => `${plural(r.deploys.length, 'deploy')} and ${plural(r.alerts.length, 'open alert')} in the last hour`,
@@ -778,7 +803,7 @@ function stepCaption(st, i, n) {
 function showStep(out, i) {
   const st = out.steps[i], r = st.result || {};
   pos = i; updateStepper();
-  setCaption(stepCaption(st, i, out.steps.length));
+  setCaption(stepCaption(st));
   if (r.error) { spotlight([]); return; }
   let lit = [], opts = {};
   switch (st.tool) {
@@ -841,8 +866,7 @@ function showAnswer() {
       cy.getElementById(svc(s.page.service)).removeClass('faded');
       cy.elements('[?ephemeral]').removeClass('faded').addClass('lit');
     }
-    setCaption(stepCaption(out.steps[i], i, n).replace(/^<span class="k">[^<]*<\/span>/, '<span class="k">Verdict</span>')
-      + (s.page ? esc(` · page ${s.page.on_call || s.page.team}`) : ''));
+    setCaption(stepCaption(out.steps[i]) + (s.page ? esc(` · page ${s.page.on_call || s.page.team}`) : ''));
     pos = n; updateStepper();
     goHome();
     return;
@@ -864,7 +888,7 @@ function showAnswer() {
     keep.connectedEdges('[?ephemeral]').removeClass('faded').addClass('lit');
   }
   const cause = s.root_cause ? `${s.root_cause.service} ${s.root_cause.version} by ${s.root_cause.by}` : '';
-  setCaption(`<span class="k">Verdict</span>` + esc([cause && `cause: ${cause}`,
+  setCaption(esc([cause && `cause: ${cause}`,
     s.path && `path: ${s.path.join(' → ')}`, s.page && `page ${s.page.on_call || s.page.team}`].filter(Boolean).join(' · ')));
   pos = n; updateStepper();
   goHome();
@@ -909,8 +933,8 @@ function stopReplay() { clearInterval(timer); timer = null; updateStepper(); }
 
 /** Sync the step controls with `pos` and `timer`: counter, ◀ ▶ enabled, Play or Pause, active row. */
 function updateStepper() {
-  if (!$('pos')) return;
   const n = current ? current.out.steps.length : 0;
+  $('player').hidden = !current;
   $('pos').textContent = !current || pos < 0 ? plural(n, 'step') : pos >= n ? 'Verdict' : `${pos + 1} / ${n}`;
   $('prev').disabled = !current || pos <= 0;
   $('next').disabled = !current || pos >= n;
@@ -1038,7 +1062,7 @@ function verdictHtml(out) {
       + crit.ranking.slice(0, 5).map((x, k) => `<div class="ev"><span class="ago num">#${k + 1}</span>${pill(x.service)}<span class="msg"></span><span class="ago num">${esc(x.score)}</span></div>`).join('')
       + `</div></div>`;
   } else {
-    kind = `<div class="kind">${icon('help', 'sm')}${out.check.by_rules || out.provider === 'rules' ? 'Diagnosis by rules' : 'Answer'}</div>`;
+    kind = `<div class="kind">${icon('help', 'sm')}${out.check.by_rules || out.provider === 'rules' ? 'Diagnosis by rules' : 'In short'}</div>`;
     head = `<div class="headline text">${linkServices(esc(firstLine(out)))}</div>`;
   }
   if (s.path && s.path.length > 1) {
@@ -1106,26 +1130,47 @@ function stepsHtml(out) {
 
 /** Recent deploys and alerts, oldest first; ones off the failure chain are faded. */
 function timelineHtml(events) {
-  if (!events.length) return '';
+  if (!events.length) return '<p class="pane-note">No deploys or alerts in the last hour.</p>';
   const items = events.map(e => {
     const c = e.kind === 'deploy' ? 'var(--accent)' : (SEV[e.severity] || 'var(--faint)');
     const what = e.kind === 'deploy' ? linkServices(esc(e.text)) : `${pill(e.service)} ${esc(e.text)}`;
     return `<li class="${e.related ? '' : 'other'}" style="--c:${c}"><span class="when num">−${e.minutes_ago}m</span><span class="what">${what}</span></li>`;
   }).join('');
-  return `<div class="block"><div class="section-label">Timeline · last hour</div><ul class="timeline">${items}</ul></div>`;
+  return `<p class="pane-note">Deploys and alerts in the last hour, oldest first. Faded ones are off the failure chain.</p><ul class="timeline">${items}</ul>`;
 }
 
-/** Collapsed sections: the model's full text and the Cypher that ran. */
-function foldsHtml(out, openText) {
-  const cypher = out.queries.length
-    ? `<details class="fold"><summary><span class="chev">${icon('chev', 'sm')}</span>${plural(out.queries.length, 'Cypher query', 'Cypher queries')} that ran</summary><div class="body">`
-      + `<div class="qhead"><span>Values are filled in, so each runs as pasted into FalkorDB Browser.</span>`
-      + `<button class="copy" type="button" data-copy="all">${icon('copy', 'sm')}Copy all</button></div>`
-      + out.queries.map((q, i) => `<div class="qbox"><pre>${esc(q)}</pre><button class="copy" type="button" data-copy="${i}">${icon('copy', 'sm')}Copy</button></div>`).join('')
-      + `</div></details>` : '';
-  const who = out.provider === 'rules' ? 'Rules diagnosis' : 'Full answer from the model';
-  return `<details class="fold"${openText ? ' open' : ''}><summary><span class="chev">${icon('chev', 'sm')}</span>${who}</summary>`
-    + `<div class="body answer">${renderAnswer(answerText(out))}</div></details>` + cypher;
+/** Collapsed section under the verdict: the model's (or the rules') full text. */
+function fullTextHtml(out, open) {
+  const who = out.provider === 'rules' ? 'Rules diagnosis, full text' : 'Full answer from the model';
+  return `<details class="fold" style="margin-top:12px"${open ? ' open' : ''}><summary><span class="chev">${icon('chev', 'sm')}</span>${who}</summary>`
+    + `<div class="body answer">${renderAnswer(answerText(out))}</div></details>`;
+}
+
+/** The Cypher tab: every query that ran, each with a Copy button. */
+function cypherHtml(out) {
+  if (!out.queries.length) return '<p class="pane-note">No queries ran.</p>';
+  return `<div class="qhead"><span>Values are filled in, so each runs as pasted into FalkorDB Browser.</span>`
+    + `<button class="copy" type="button" data-copy="all">${icon('copy', 'sm')}Copy all</button></div>`
+    + out.queries.map((q, i) => `<div class="qbox"><pre>${esc(q)}</pre><button class="copy" type="button" data-copy="${i}">${icon('copy', 'sm')}Copy</button></div>`).join('');
+}
+
+/** Tab bar for one answer; `counts` gives the small number after a tab's name. */
+function tabsHtml(out) {
+  const tabs = [['answer', 'Answer', ''], ['steps', 'Steps', out.steps.length],
+                ['timeline', 'Timeline', out.timeline.length], ['cypher', 'Cypher', out.queries.length]];
+  return `<div class="tabs" role="tablist">` + tabs.map(([k, name, n]) =>
+    `<button type="button" role="tab" data-tab="${k}">${name}${n !== '' ? `<span class="n num">${n}</span>` : ''}</button>`).join('') + `</div>`;
+}
+
+let tab = 'answer';   // the open tab; kept when a new answer arrives
+
+/** Open tab `k` (answer, steps, timeline or cypher). */
+function showTab(k) {
+  tab = k;
+  document.querySelectorAll('.tabs [data-tab]').forEach(b => {
+    b.classList.toggle('on', b.dataset.tab === k); b.setAttribute('aria-selected', String(b.dataset.tab === k));
+  });
+  document.querySelectorAll('.pane').forEach(p => { p.hidden = p.dataset.pane !== k; });
 }
 
 /** Question line with the history menu (earlier questions in this session). */
@@ -1142,20 +1187,17 @@ function renderResult(entry) {
   const { q, out } = entry, s = out.summary;
   const structured = s.root_cause || lastResult(out, 'blast_radius') || lastResult(out, 'critical_services');
   const inv = $('inv');
-  inv.innerHTML = questionHtml(q) + verdictHtml(out)
-    + `<div class="metarow">${modelBadge(out)}${checkTag(out)}</div>`
-    + `<div class="block"><div class="section-label">Investigation`
-    + `<div class="scrub"><button class="ghost" id="prev" type="button" title="Previous step (← key)" aria-label="Previous step">${icon('left', 'sm')}</button>`
-    + `<span class="pos num" id="pos" aria-live="polite"></span>`
-    + `<button class="ghost" id="next" type="button" title="Next step (→ key)" aria-label="Next step">${icon('right', 'sm')}</button>`
-    + `<button class="ghost" id="replay" type="button" title="Play the steps"></button></div></div>`
+  inv.innerHTML = questionHtml(q) + tabsHtml(out)
+    + `<div class="pane" data-pane="answer">${verdictHtml(out)}`
+    + `<div class="metarow">${modelBadge(out)}${checkTag(out)}</div>${fullTextHtml(out, !structured)}</div>`
+    + `<div class="pane" data-pane="steps"><p class="pane-note">The tool calls, in order. Click one, or use ◀ ▶ under the graph, to see what it touched.</p>`
     + `<ol class="steps" id="steps">${stepsHtml(out)}</ol></div>`
-    + timelineHtml(out.timeline) + foldsHtml(out, !structured);
+    + `<div class="pane" data-pane="timeline">${timelineHtml(out.timeline)}</div>`
+    + `<div class="pane" data-pane="cypher">${cypherHtml(out)}</div>`;
+  inv.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  showTab(tab);
   const list = $('steps');
   list.querySelectorAll('li').forEach(li => li.onclick = () => { stopReplay(); closeInspector(); current = { out, list }; goTo(+li.dataset.i); });
-  $('prev').onclick = () => stepBy(-1);
-  $('next').onclick = () => stepBy(1);
-  $('replay').onclick = () => { closeInspector(); replay(); };
   inv.querySelectorAll('[data-copy]').forEach(b => b.onclick = () =>
     copyText(b.dataset.copy === 'all' ? out.queries.join(';\n\n') : out.queries[+b.dataset.copy], b));
   inv.querySelectorAll('[data-h]').forEach(b => b.onclick = () => renderResult(history[+b.dataset.h]));
@@ -1247,6 +1289,9 @@ $('panel').addEventListener('click', e => {
   const p = e.target.closest('.svc'); if (!p || !cy) return;
   const n = cy.getElementById(svc(p.dataset.s)); if (n.length) { stopReplay(); focusNode(n); }
 });
+$('prev').onclick = () => stepBy(-1);
+$('next').onclick = () => stepBy(1);
+$('replay').onclick = () => { closeInspector(); replay(); };
 $('showAll').onclick = () => { closeInspector(); showAll(); goHome(); };
 $('closeInspector').onclick = closeInspector;
 $('legendBtn').onclick = () => {
@@ -1273,7 +1318,7 @@ window.addEventListener('resize', () => { if (!cy) return; cy.resize(); setHome(
 const startQuestion = new URLSearchParams(location.search).get('q');
 loadGraph()
   .then(() => startQuestion && ask(startQuestion))
-  .catch(e => { reportError(`graph load failed: ${e.message}`, '', e.stack); if ($('empty')) $('empty').textContent = `Graph not reachable: ${e.message}`; setStatus(false, `<span class="chip">${esc(e.message)}</span>`); });
+  .catch(e => { reportError(`graph load failed: ${e.message}`, '', e.stack); if ($('empty')) $('empty').textContent = `Graph not reachable: ${e.message}`; setStatus(false, `<span class="stat">${esc(e.message)}</span>`); });
 </script>
 </body>
 </html>
