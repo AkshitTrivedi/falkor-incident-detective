@@ -147,9 +147,11 @@ NO_DEPLOY = NOT_FOUND + ("no deploy", "not deployed", "wasn't deployed", "was no
                          "did not happen", "didn't happen", "no such")
 
 # Rule 13: ways of saying a person is not in the graph, on top of NOT_FOUND.
-NO_PERSON = NOT_FOUND + ("no one named", "nobody named", "no person", "not a person",
-                         "not on call", "not on-call", "isn't on call", "isn't on-call",
-                         "not the on-call", "not the on call")
+# "Not on call" and "not listed as on call" are not enough: both imply the person
+# exists (live F3, Oct 18: "Sarah Jenkins is not listed as being on call").
+NO_PERSON = tuple(p for p in NOT_FOUND if p != "not listed") + (
+    "no one named", "nobody named", "no person", "not a person", "not listed in the graph",
+    "not listed anywhere")
 # Rule 13: capitalised question words that start a sentence, not a name.
 _QUESTION_WORDS = {"is", "are", "was", "did", "does", "do", "should", "can", "could", "who",
                    "what", "why", "when", "where", "which", "will", "has", "have", "tell",
@@ -847,6 +849,9 @@ def _denied(text, name, kind):
         rf"(?<![\w-]){n}{suffix} (?:does not|doesn't) exist",
         rf"\bno (?:record of )?(?:an? )?{noun} (?:named|called) {n}(?![\w-])",
         rf"(?<![\w-]){n} (?:is not|isn't) (?:an? )?(?:known )?{noun}\b",
+        # Live F6, Oct 18: "There is no cartservice deploy in the graph — and no
+        # cartservice at all."
+        rf"\bno {n}{suffix} at all\b",
     )
     return any(re.search(p, text) for p in patterns)
 

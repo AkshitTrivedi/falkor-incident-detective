@@ -202,3 +202,23 @@ def test_page_may_name_the_person_an_incident_already_paged():
                        "paged": "Priya Nair", "opened_minutes_ago": 3}]}}]
     facts = verify._returned(steps)
     assert "priya nair" in facts["on_call"]
+
+
+def test_not_on_call_does_not_call_out_a_made_up_person():
+    """Live F3, Oct 18: 'not listed as being on call' implies Sarah Jenkins exists."""
+    steps = [{"tool": "who_to_page", "args": {"service": "payments"},
+              "result": {"service": None, "team": "Payments", "on_call": "Priya Nair"}}]
+    vocab = {"services": set(), "people": {"priya nair"}, "versions": set(), "teams": {"payments"}}
+    q = "Is Sarah Jenkins on call for payments right now?"
+    bad = ("Priya Nair is the person currently on call for the Payments team. "
+           "Sarah Jenkins is not listed as being on call for that team.")
+    good = "There is no Sarah Jenkins in the graph. Priya Nair is on call for the Payments team."
+    assert any("sarah jenkins" in p for p in verify.check_answer(bad, steps, q, vocab))
+    assert not any("sarah jenkins" in p for p in verify.check_answer(good, steps, q, vocab))
+
+
+def test_no_service_at_all_is_a_false_denial():
+    """Live F6, Oct 18: 'no cartservice at all' when cartservice exists."""
+    assert verify._denied("there is no cartservice deploy in the graph — and no cartservice at all.",
+                          "cartservice", "service")
+    assert not verify._denied("there is no cartservice deploy in the graph.", "cartservice", "service")
