@@ -208,6 +208,51 @@ def test_failure_path_ends_at_the_blamed_service_not_the_last_path_looked_up(g):
     assert s["path"] == ["checkoutservice", "paymentservice", "fraud-check"]
 
 
+def test_cause_path_is_looked_up_when_no_step_reached_the_blamed_service(g):
+    """Live UI test, Oct 18, F7: only checkoutservice -> paymentservice was checked, yet
+    fraud-check was blamed. The app adds the missing lookup as a visible step."""
+    r = diagnose.rule_answer(g, QUESTION)
+    steps = [s for s in r["steps"] if s["tool"] in ("recent_changes", "who_to_page")]
+    steps.append({"tool": "dependency_path", "args": {}, "ms": 1,
+                  "result": tools.dependency_path(g, "checkoutservice", "paymentservice")})
+    out = {"answer": "Root cause: fraud-check v3.1.0, deployed by Daniel Okafor.", "steps": steps,
+           "queries": [], "path": ["checkoutservice", "paymentservice"]}
+    vocab = verify.graph_vocabulary(g)
+    out["summary"] = app.summarize(out, vocab, "Why did Daniel Okafor's deploy to paymentservice break checkout?")
+    assert app._add_cause_path(g, out)
+    assert out["steps"][-1]["args"] == {"from_service": "checkoutservice", "to_service": "fraud-check"}
+    assert len(out["queries"]) == 1
+    out["summary"] = app.summarize(out, vocab, "x")
+    assert out["summary"]["path"] == ["checkoutservice", "paymentservice", "fraud-check"]
+    assert not app._add_cause_path(g, out)          # already reaches it
+
+
+def test_no_recent_deploy_in_prose_is_a_no_cause_card(g):
+    """Live UI test, Oct 18, C3 (Nemotron): the card said 'Blast radius, 2 services break'."""
+    r = diagnose.rule_answer(g, "adservice cache miss rate is high. What broke?")
+    steps = [{"tool": "blast_radius", "args": {}, "ms": 1, "result": tools.blast_radius(g, "adservice")}]
+    steps += [s for s in r["steps"] if s["tool"] == "recent_changes"]
+    out = {"answer": "Root cause: adservice cache miss rate high (no recent deploy implicated; "
+                     "adservice has no dependencies)\nPage: Storefront, Maya Chen",
+           "steps": steps, "path": None}
+    s = app.summarize(out, verify.graph_vocabulary(g), "adservice cache miss rate is high. What broke?")
+    assert s["no_cause"] and s["root_cause"] is None
+
+
+def test_rollback_question_acts_on_the_deploy_it_names(g):
+    """Live UI test, Oct 18, R1: no Root cause section, so the card had no deploy to roll back."""
+    r = diagnose.rule_answer(g, QUESTION)
+    out = {"answer": "Rolling back fraud-check should clear the alerts on paymentservice and "
+                     "checkoutservice. The adservice alert will not clear.",
+           "steps": r["steps"], "path": None}
+    s = app.summarize(out, verify.graph_vocabulary(g),
+                      "If we roll back fraud-check, which alerts should clear?")
+    assert s["root_cause"]["service"] == "fraud-check" and s["rollback"]
+    # payments-db is a callee of fraud-check: no tool looked at it, but its alert clears too.
+    assert {"payments-db", "paymentservice", "checkoutservice"} <= set(s["related"])
+    assert "adservice" not in s["related"]
+
+
 def test_summary_reads_a_separate_issue_as_unrelated(g):
     """C1, live Oct 18 (StepFun): "Unrelated. ... The adservice alert (...) is a
     separate issue from the checkout outage" left the card's Not related empty."""

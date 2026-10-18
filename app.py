@@ -27,6 +27,7 @@ routes, which a person triggers by clicking a button under an answer.
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -251,8 +252,37 @@ def ask(body: Ask):
         raise HTTPException(status_code=503, detail=str(e))
     vocab = verify.graph_vocabulary(g)
     out["summary"] = summarize(out, vocab, body.question)
+    if _add_cause_path(g, out):
+        out["summary"] = summarize(out, vocab, body.question)
     out["timeline"] = timeline(g, out["summary"])
     return out
+
+
+def _add_cause_path(g, out):
+    """Look up the call path from the failing service to the blamed one when no step did.
+
+    Live UI test, Oct 18, F7: the model checked checkoutservice -> paymentservice and
+    named fraud-check as the cause, so the card's failure path stopped short of it.
+    The lookup is added as a step (and its Cypher), so the card shows nothing the
+    Steps and Cypher tabs do not.
+
+    Returns:
+        True if a step was added.
+    """
+    s = out["summary"]
+    rc, path = s["root_cause"], s["path"]
+    if not rc or not path or rc["service"] in (path[0], path[-1]):
+        return False
+    t0 = time.perf_counter()
+    result = tools.dependency_path(g, path[0], rc["service"])
+    if not result.get("path"):
+        return False
+    step = {"tool": "dependency_path", "args": {"from_service": path[0], "to_service": rc["service"]},
+            "result": result, "ms": round((time.perf_counter() - t0) * 1000)}
+    out["steps"].append(step)
+    out["queries"] = out["queries"] + agent._queries([step])
+    out["path"] = result["path"]
+    return True
 
 
 def summarize(out, vocab, question=""):
@@ -313,6 +343,7 @@ def summarize(out, vocab, question=""):
     # Root cause section names. If several match, the first (newest) wins.
     cause_text = verify._section(out["answer"].lower(), "root cause")
     no_cause = bool(re.match(verify._NO_CAUSE, cause_text))
+    raw_cause = cause_text
     if no_cause:
         cause_text = ""  # "Root cause: not found in the graph." blames nothing
     # A sentence that clears a deploy ("fraud-check v3.1.0 ... has no
@@ -321,6 +352,18 @@ def summarize(out, vocab, question=""):
                           if not re.search(verify._CLEARS, sent))
     root = next((d for d in deploys
                  if d["version"].lower() in cause_text and d["service"].lower() in cause_text), None)
+    rollback = bool(re.search(r"\broll(?:ing|ed)?[\s-]*back|\brevert", question.lower()))
+    if not root and not no_cause and rollback:
+        # Live UI test, Oct 18, R1: "If we roll back fraud-check, which alerts should
+        # clear?" has no Root cause section, so the card said "4 services break". The
+        # deploy the question names is the one to act on.
+        named = [d for d in deploys if d["service"].lower() in question.lower()]
+        root = named[0] if len(named) == 1 else None
+    if (not root and not no_cause and not re.match(verify._NO_CAUSE, raw_cause)
+            and re.search(r"\bno (?:recent )?(?:deploys?|changes?)\b", raw_cause)):
+        # Live UI test, Oct 18, C3 (Nemotron): "adservice cache miss rate high (no recent
+        # deploy implicated)" blames nothing, but does not start with "not found".
+        no_cause = True
 
     answer = out["answer"].lower()
     unrelated_text = verify._section(answer, "unrelated")
@@ -348,6 +391,11 @@ def summarize(out, vocab, question=""):
         # card listed adservice itself as "Not related" to its own question.
         keep |= verify._asked_services(question.lower(), vocab["services"])
     unrelated = sorted(named - keep)
+    if root:
+        # Live UI test, Oct 18, R1: "Should clear after rollback" omitted payments-db,
+        # the alert the rollback fixes first, because no tool had looked at it. The
+        # card uses the same chain the Roll back action clears (actions.rollback).
+        related |= keep
     related -= set(unrelated)
     # Names in the question the graph lacks, so the card can say so up front
     # instead of leading with an answer about something else.
@@ -388,7 +436,7 @@ def summarize(out, vocab, question=""):
             "root_cause": root and {k: root[k] for k in ("service", "version", "by")},
             "unrelated": unrelated, "page": page, "pages": pages,
             "no_cause": no_cause and not root, "missing": missing,
-            "rollback": bool(re.search(r"\broll(?:ing|ed)?[\s-]*back|\brevert", q))}
+            "rollback": rollback}
 
 
 def timeline(g, summary, minutes=60):

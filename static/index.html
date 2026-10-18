@@ -1225,13 +1225,18 @@ function renderAnswer(text) {
 
 /** The answer text without the rules header line, for display. */
 function answerText(out) {
-  return out.provider === 'rules' ? out.answer.replace(/^Diagnosis by rules[^\n]*\n/, '') : out.answer;
+  // Also for a model answer the checker replaced with the rules answer (provider stays the model).
+  return out.answer.replace(/^Diagnosis by rules[^\n]*\n/, '');
 }
 
 /** First sentence-ish line of the answer, without Markdown or section labels (for the verdict headline). */
 function firstLine(out) {
-  const line = answerText(out).split('\n').map(l => l.replace(/[*`#]/g, '').replace(/^[-•]\s+/, '')
-    .replace(/^(Root cause|Evidence|Unrelated|Page)\b\s*:?\s*/i, '').trim()).find(l => l && !/^N\/?A\b/i.test(l)) || 'No answer.';
+  const lines = answerText(out).split('\n').map(l => l.replace(/[*`#]/g, '').replace(/^(?:[-•]|\d+\.)\s+/, '')
+    .replace(/^(Root cause|Evidence|Unrelated|Page)\b\s*:?\s*/i, '').trim()).filter(Boolean);
+  const at = lines.findIndex(l => !/^N\/?A\b/i.test(l));
+  let line = at < 0 ? 'No answer.' : lines[at];
+  // "X depends on the following services:" is no headline without its list.
+  if (line.endsWith(':')) line += ' ' + lines.slice(at + 1, at + 5).map(l => l.replace(/\s*\(.*$/, '')).join(', ');
   return line.length > 220 ? line.slice(0, 217) + '…' : line;
 }
 
@@ -1276,6 +1281,11 @@ function verdictHtml(out) {
     kind = `<div class="kind">${icon('help', 'sm')}No root cause found</div>`;
     head = `<div class="headline">No recent deploy explains it</div>`;
     sub = failing.length ? `Checked ${failing.map(x => pill(x, 'bad')).join(' ')} and everything on ${failing.length > 1 ? 'their' : 'its'} dependency chain` : '';
+  } else if (br && !br.affected.length) {
+    // An empty walk says what the graph covers, not that nothing can break.
+    kind = `<div class="kind">${icon('network', 'sm')}Blast radius</div>`;
+    head = `<div class="headline">No recorded dependents</div>`;
+    sub = `the graph has no service that calls ${pill(br.service)}; an unrecorded caller could still break`;
   } else if (br) {
     kind = `<div class="kind">${icon('network', 'sm')}Blast radius</div>`;
     head = `<div class="headline">${plural(br.affected.length, 'service')} break</div>`;
