@@ -1,0 +1,22 @@
+# Render Blueprint: one free web service. The graph lives in FalkorDB Cloud;
+# the app seeds an empty graph on its first request (seed.ensure_fresh).
+services:
+  - type: web
+    name: incident-detective
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.15
+      # Paste these in the Render dashboard; sync:false keeps them out of git.
+      - key: FALKORDB_URL        # falkors://user:pass@host:port from FalkorDB Cloud
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
