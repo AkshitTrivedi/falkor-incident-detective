@@ -209,7 +209,7 @@ All numbers are from the code in this repository and can be reproduced with the 
 
 | Run | Cases | Passed | What it measures |
 |---|---|---|---|
-| Unit tests | 288 | 288 | Tools, checker, routing, card, no-key path, actions, MCP server |
+| Unit tests | 293 | 293 | Tools, checker, routing, card, no-key path, actions, MCP server |
 | Edge-case suite, no models (rules only) | 62 | 62 | Deterministic answers from the rules diagnosis |
 | Edge-case suite, live models | 62 | 62 | Full chain: real LLMs, checker, retry, card |
 | Checker over saved model answers | 456 | 42 rejected | All 42 read by hand: every one a real defect, no false positives |
