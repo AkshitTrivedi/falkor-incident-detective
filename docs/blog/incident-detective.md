@@ -23,6 +23,9 @@ Which deploy broke it? Is the adservice alert part of this, or noise? Who do I w
 
 **Try it:** [incident-detective.onrender.com](https://incident-detective.onrender.com) (free tier, the first load can take about 50 seconds) · **Code:** [github.com/AkshitTrivedi/falkor-incident-detective](https://github.com/AkshitTrivedi/falkor-incident-detective)
 
+![A 15-second run of the live app: the question, the agent's steps lighting the path on the graph, the verdict, then Open incident and Roll back](https://raw.githubusercontent.com/AkshitTrivedi/falkor-incident-detective/main/docs/img/blog/demo.gif)
+*15 seconds of the real app, in case the free-tier site is still waking up.*
+
 <!-- TODO before publishing: replace VIDEO_ID with the YouTube demo id -->
 {% youtube VIDEO_ID %}
 
@@ -50,9 +53,12 @@ The demo graph is synthetic, based on Google's Online Boutique plus a payments c
 The model never writes Cypher. It picks from six fixed, parameterised tools, and every query runs through `GRAPH.RO_QUERY` with a 3-second timeout. The walk that does the work is one pattern:
 
 ```cypher
+// capped at 8 hops: the longest chain in this graph is 6
 MATCH p = (s:Service {name: $name})-[r:DEPENDS_ON*1..8]->(x:Service)
 RETURN x.name, min(length(p)) AS hops
 ```
+
+The cap is my choice, not a FalkorDB rule (FalkorDB's default upper bound is unlimited). It keeps the number of paths the query explores bounded if the graph grows or ever gains a cycle, and a test fails if the seed outgrows it.
 
 Reverse the arrow and you get the blast radius: everything that breaks when a service does. "What breaks if payments-db goes down?" shows why depth matters:
 
@@ -93,7 +99,7 @@ This is where most of my time went. Every model I tried produced confident mista
 - "Yes, payments-db depends on checkoutservice." It's the other way round.
 - At 300 services, "49 services are affected", when the tool returned 47.
 
-So after the model writes its answer, a checker reads it next to the raw tool results and lists every claim the graph doesn't support. It has 26 rules in five groups: invented facts (people, services, versions, numbers, counts), wrong reasoning (backwards dependencies, an alerting service on the failure chain called "unrelated"), questions about things that don't exist, skipped work, and unanswered questions (a Page line that names nobody, "should we roll back?" with no yes or no).
+So after the model writes its answer, a checker reads it next to the raw tool results and lists every claim the graph doesn't support. The checker is plain Python (regexes and set lookups over the tool results), not a second model acting as judge, so it spends no tokens and takes about 2 ms per answer. It has 26 rules in five groups: invented facts (people, services, versions, numbers, counts), wrong reasoning (backwards dependencies, an alerting service on the failure chain called "unrelated"), questions about things that don't exist, skipped work, and unanswered questions (a Page line that names nobody, "should we roll back?" with no yes or no).
 
 ![A real rejected answer next to one that passes: "Sarah Jenkins is not listed as being on call" is flagged because it implies she exists; the passing answer says she is not in the graph](https://raw.githubusercontent.com/AkshitTrivedi/falkor-incident-detective/main/docs/img/blog/checker.png)
 *"Not listed as on call" sounds fine, but it implies Sarah exists. The checker sends the problem back to the model for one retry.*
@@ -172,4 +178,4 @@ The model was never the hard part. Making it prove every sentence was.
 
 {% github AkshitTrivedi/falkor-incident-detective %}
 
-*AI-assisted: I built this with Claude Code as a coding assistant, and used it to help draft this post. Every claim and number here was checked against the running system and the test results in the repository.*
+*AI-assisted: built and drafted with Claude Code; every number here comes from the running system and the repo's tests.*
