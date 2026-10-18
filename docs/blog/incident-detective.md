@@ -95,9 +95,7 @@ This is where most of my time went. Every model I tried produced confident mista
 
 - Codestral blamed "a paymentservice deploy by Priya Nair". Both names exist. That deploy doesn't.
 - An on-call engineer called "Sarah Jenkins", who isn't in the graph.
-- `paymentservice v3.1.0`, when v3.1.0 was a `fraud-check` deploy.
 - "Yes, payments-db depends on checkoutservice." It's the other way round.
-- At 300 services, "49 services are affected", when the tool returned 47.
 
 So after the model writes its answer, a checker reads it next to the raw tool results and lists every claim the graph doesn't support. The checker is plain Python (regexes and set lookups over the tool results), not a second model acting as judge, so it spends no tokens and takes about 2 ms per answer. It has 27 rules in five groups: invented facts (people, services, versions, numbers, counts), wrong reasoning (backwards dependencies, an alerting service on the failure chain called "unrelated"), questions about things that don't exist, skipped work, and unanswered questions (a Page line that names nobody, "should we roll back?" with no yes or no).
 
@@ -143,11 +141,6 @@ The six read tools and both actions are also exposed over the Model Context Prot
 - *What went wrong:* when I ran the rule over the 456 saved answers, it also flagged 25 answers, almost all of them correct. Every one was the red-herring question, which mentions an outage but pages nobody.
 - *Fix:* the rule now applies only to answers that actually page someone. Re-run over all 456, it flags nothing new.
 - *Status:* fixed.
-
-**The live site was slow for a silly reason.**
-- *Cause:* a plain "hello" took 12 s on Render. The app opened a new connection to FalkorDB Cloud on every request, and even a "hello" ran about 35 queries, mostly re-reading the same lists of names, each a round trip from Oregon to Mumbai.
-- *Fix:* reuse one connection, and cache the names for 30 s (cleared whenever the graph changes).
-- *Status:* about 3 s now.
 
 ## Results
 
