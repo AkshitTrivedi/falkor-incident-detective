@@ -4,6 +4,8 @@
 
 Built solo for Graph Hacks (WeMakeDevs × FalkorDB), Oct 15–18 2026. **Track 01: Agents That Act on Connected Data.**
 
+**Live demo: [incident-detective.onrender.com](https://incident-detective.onrender.com)** (Render free tier on FalkorDB Cloud; the first load after it sleeps can take about 50 seconds).
+
 ![Incident Detective answering "checkoutservice is throwing 5xx errors": root cause fraud-check v3.1.0, the failure path on the graph, and who to page](docs/img/incident-llm.png)
 
 *One question in. The root cause (`fraud-check v3.1.0`, deployed 26 minutes ago by Daniel Okafor), the call path it travelled to `checkoutservice`, the evidence, the unrelated alert, and the person to page. The graph on the right lights up the same path, and the green badge means the checker confirmed every claim against the graph.*
