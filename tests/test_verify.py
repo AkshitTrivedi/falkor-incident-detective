@@ -222,3 +222,20 @@ def test_no_service_at_all_is_a_false_denial():
     assert verify._denied("there is no cartservice deploy in the graph — and no cartservice at all.",
                           "cartservice", "service")
     assert not verify._denied("there is no cartservice deploy in the graph.", "cartservice", "service")
+
+
+def test_paging_the_failing_services_owner_without_the_deploy_on_its_chain_is_caught():
+    """Live UI test, Oct 18 (Nemotron), A6: paged Omar Haddad (checkout) and never
+    mentioned the fraud-check deploy that checkoutservice depends on."""
+    steps = [{"tool": "who_to_page", "args": {"service": "checkoutservice"},
+              "result": {"service": "checkoutservice", "team": "Checkout", "on_call": "Omar Haddad"}},
+             {"tool": "recent_changes", "args": {"minutes": 60},
+              "result": {"deploys": [{"service": "fraud-check", "version": "v3.1.0",
+                                      "by": "Daniel Okafor", "minutes_ago": 14}], "alerts": []}}]
+    vocab = {"services": {"checkoutservice", "fraud-check", "paymentservice"},
+             "people": {"omar haddad", "daniel okafor"}, "versions": {"v3.1.0"},
+             "teams": {"checkout"}, "reach": {"checkoutservice": {"paymentservice", "fraud-check"}}}
+    q = "CHECKOUTSERVICE 5XX ERRORS!!! WHO DO I PAGE"
+    bad = "Page the Checkout team; the on-call engineer is Omar Haddad."
+    problems = verify.check_answer(bad, steps, q, vocab)
+    assert any("fraud-check" in p and "before paging" in p for p in problems)

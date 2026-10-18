@@ -791,6 +791,22 @@ def check_answer(answer, steps, question, vocab):
         problems.append("the question reports a failure, but recent_changes was not called, "
                         "so the page skips the cause")
 
+    # Rule 19b: ...and it must use what recent_changes showed. Live UI test, Oct 18
+    # (Nemotron): "CHECKOUTSERVICE 5XX ERRORS!!! WHO DO I PAGE" called who_to_page
+    # and recent_changes, then paged checkout's owner without a word about the
+    # fraud-check deploy on checkout's dependency chain.
+    reach = vocab.get("reach") or {}
+    # Only answers that page someone: "is the adservice alert related to the checkout
+    # outage?" names checkout and an outage but pages nobody (bake-off question C).
+    if (re.search(_INCIDENT, q) and "who_to_page" in tools_run
+            and re.search(r"\bpag(?:e|ing)\b", plain)):
+        for svc in _asked_services(q, vocab["services"]):
+            on_chain = {d for d in facts["deploys"].values() if d in reach.get(svc, set())}
+            missed = sorted(d for d in on_chain if not _mentions(plain, {d}))
+            if missed:
+                problems.append(f"{svc} depends on {', '.join(missed)}, which had a recent deploy, "
+                                "but the answer does not mention it before paging")
+
     # Rule 21: "should we roll back X?" needs a yes or a no. Live test, Oct 16
     # (Nemotron) gave the root cause and never said whether to roll back.
     # A bare "no" anywhere is not an answer: "slow query (no index)" passed
