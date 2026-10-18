@@ -372,6 +372,13 @@ def summarize(out, vocab, question=""):
         return min(hits) if hits else None
     pages = sorted((p for p in pages if named_at(p) is not None), key=named_at)
     page = pages[0] if pages else None
+    if root and path and root["service"] not in (path[0], path[-1]):
+        # Live test, Oct 18: the model also looked up checkoutservice -> payments-db
+        # last, so the card's failure path ended at the alerting database instead of
+        # at the blamed fraud-check. Use a path that reaches the blamed service.
+        ends = [p for p in (s["result"].get("path") for s in steps if s["tool"] == "dependency_path"
+                            and "error" not in s["result"]) if p and root["service"] in (p[0], p[-1])]
+        path = ends[-1] if ends else path
     if no_cause and not root:
         # Live test, Oct 16: "adservice cache miss rate is high" showed the
         # checkoutservice → fraud-check path from another service's check, on a

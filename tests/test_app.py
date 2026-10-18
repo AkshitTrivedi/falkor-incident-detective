@@ -195,6 +195,19 @@ def test_summary_reads_unrelated_from_prose(g):
     assert "paymentservice" in s["related"]
 
 
+def test_failure_path_ends_at_the_blamed_service_not_the_last_path_looked_up(g):
+    """Live, Oct 18 (Qwen): paths to fraud-check and then to payments-db were looked up;
+    the card drew the second, ending at the alerting database, not at the root cause."""
+    steps = [{"tool": "recent_changes", "args": {}, "result": tools.recent_changes(g)}]
+    for a, b in (("checkoutservice", "fraud-check"), ("checkoutservice", "payments-db")):
+        steps.append({"tool": "dependency_path", "args": {"from_service": a, "to_service": b},
+                      "result": tools.dependency_path(g, a, b)})
+    out = {"answer": "Root cause: fraud-check v3.1.0, deployed by Daniel Okafor 14 minutes ago.",
+           "steps": steps, "path": ["checkoutservice", "paymentservice", "payments-db"]}
+    s = app.summarize(out, verify.graph_vocabulary(g), QUESTION)
+    assert s["path"] == ["checkoutservice", "paymentservice", "fraud-check"]
+
+
 def test_summary_reads_a_separate_issue_as_unrelated(g):
     """C1, live Oct 18 (StepFun): "Unrelated. ... The adservice alert (...) is a
     separate issue from the checkout outage" left the card's Not related empty."""

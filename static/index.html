@@ -1382,7 +1382,6 @@ function reasoningSentence(out) {
 function reasoningHtml(out) {
   const steps = out.steps.map((st, i) => ({ st, i })).filter(({ st }) => !st.result?.error);
   if (steps.length < 2) return '';   // one step: the card's summary line already says it
-  const sentence = reasoningSentence(out);
   const rows = steps.map(({ st, i }, k) => {
     const args = Object.values(st.args || {}).join(', '), d = stepDepth(st);
     const gauge = d === null ? '' : `<span class="gauge" title="${d} of ${MAX_HOPS} possible hops">`
@@ -1391,7 +1390,7 @@ function reasoningHtml(out) {
       + `<span class="n">${k + 1}</span><span class="t">${esc(st.tool)}<span>(${esc(args)})</span></span>${gauge}`
       + `<span class="found">${esc(stepResult(st))} · ${st.ms} ms</span><span class="feat">${esc(FEATURE[st.tool]?.(st.result) || '')}</span></button>`;
   }).join('');
-  return `<div class="reason"><p>${sentence}</p><div class="rs-list">${rows}</div></div>`;
+  return `<div class="reason"><div class="rs-list">${rows}</div></div>`;   // the sentence is in the card
 }
 
 /**
