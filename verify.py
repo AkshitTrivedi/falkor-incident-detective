@@ -473,6 +473,11 @@ def _returned(steps):
             facts["alerting"].add(str(al.get("service", "")).lower())
         if result.get("on_call"):
             facts["on_call"].add(result["on_call"].lower())
+        # "Page: Priya Nair (already paged for INC-1)" is backed by the incident
+        # on record (recent_changes), not only by who_to_page.
+        for inc in result.get("incidents", []):
+            if inc.get("paged"):
+                facts["on_call"].add(inc["paged"].lower())
         if result.get("team"):
             facts["teams"].add(result["team"].lower())
         # (service, the services it depends on), for rule 5.

@@ -192,3 +192,13 @@ def test_vocabulary_is_fetched_once_and_cleared_by_seed():
     verify.graph_vocabulary(counted)
     assert counted.calls > after_first + 1
     graph.delete()
+
+
+def test_page_may_name_the_person_an_incident_already_paged():
+    """recent_changes' incidents back "already paged" without a who_to_page call."""
+    steps = [{"tool": "recent_changes", "args": {}, "result": {
+        "deploys": [], "alerts": [],
+        "incidents": [{"id": "INC-1", "status": "mitigated", "cause": "fraud-check v3.1.0",
+                       "paged": "Priya Nair", "opened_minutes_ago": 3}]}}]
+    facts = verify._returned(steps)
+    assert "priya nair" in facts["on_call"]
