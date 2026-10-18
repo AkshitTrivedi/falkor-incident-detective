@@ -4,7 +4,7 @@
 
 Built solo for Graph Hacks (WeMakeDevs × FalkorDB), Oct 15–18 2026. **Track 01: Agents That Act on Connected Data.**
 
-**Live demo: [incident-detective.onrender.com](https://incident-detective.onrender.com)** (Render free tier on FalkorDB Cloud; the first load after it sleeps can take about 50 seconds).
+**Demo video: [youtu.be/TG6OcA7B7Hc](https://youtu.be/TG6OcA7B7Hc)** · **Live demo: [incident-detective.onrender.com](https://incident-detective.onrender.com)** (Render free tier on FalkorDB Cloud; the first load after it sleeps can take about 50 seconds).
 
 ![Incident Detective answering "checkoutservice is throwing 5xx errors": root cause fraud-check v3.1.0, the failure path on the graph, and who to page](docs/img/incident-llm.png)
 

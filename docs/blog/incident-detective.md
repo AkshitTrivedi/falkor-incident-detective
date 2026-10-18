@@ -26,8 +26,7 @@ Which deploy broke it? Is the adservice alert part of this, or noise? Who do I w
 ![A 15-second run of the live app: the question, the agent's steps lighting the path on the graph, the verdict, then Open incident and Roll back](https://raw.githubusercontent.com/AkshitTrivedi/falkor-incident-detective/main/docs/img/blog/demo.gif)
 *15 seconds of the real app, in case the free-tier site is still waking up.*
 
-<!-- TODO before publishing: replace VIDEO_ID with the YouTube demo id -->
-{% youtube VIDEO_ID %}
+{% youtube TG6OcA7B7Hc %}
 
 ![The answer card for "checkoutservice is throwing 5xx errors": root cause fraud-check v3.1.0, the failure path, evidence, the unrelated alert, who to page, and the reasoning trace](https://raw.githubusercontent.com/AkshitTrivedi/falkor-incident-detective/main/docs/img/blog/answer.png)
 *One question in. The card names the deploy, draws the path it took to checkout, lists the evidence, sets aside the unrelated alert and says who to page. The graph on the right lights up the same path.*
