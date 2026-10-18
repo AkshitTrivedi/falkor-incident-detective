@@ -75,6 +75,7 @@ one fails too, it shows plain_answer() instead: the tool rows, with no model tex
 import difflib
 import json
 import re
+import time
 
 import tools
 
@@ -179,6 +180,41 @@ _NOT_NAME_WORDS = {"team", "page", "on", "call", "root", "cause", "the", "a", "a
                    "nobody", "owner", "owners", "lead", "engineer", "contact", "notify", "escalate"}
 
 
+# Name lists change only when the graph is re-seeded, so one answer's many lookups
+# (a question can ask for them 10+ times) share one fetch. Against FalkorDB Cloud
+# each fetch is a 250 ms round trip, which made a 'hello' take 9 s.
+VOCAB_TTL_S = 30
+_cache = {}
+
+
+def clear_cache():
+    """Forget cached name lists; seed.seed() calls this after it rewrites the graph."""
+    _cache.clear()
+
+
+def cached(g, key, fetch):
+    """Return `fetch()` for graph `g`, reusing it for VOCAB_TTL_S seconds.
+
+    Args:
+        g: FalkorDB Graph handle (its name keys the cache).
+        key: What is cached, e.g. "vocabulary" or "service_names".
+        fetch: Zero-argument function that reads it from the graph.
+    """
+    k = (g.name, key)
+    hit = _cache.get(k)
+    if hit and time.monotonic() - hit[0] < VOCAB_TTL_S:
+        return hit[1]
+    value = fetch()
+    _cache[k] = (time.monotonic(), value)
+    return value
+
+
+def service_names(g):
+    """Every service name, exact spelling, in graph order (cached)."""
+    return cached(g, "service_names", lambda: [
+        row[0] for row in g.ro_query("MATCH (s:Service) RETURN s.name").result_set])
+
+
 def graph_vocabulary(g):
     """Fetch every service name, person name and deploy version in the graph.
 
@@ -191,18 +227,21 @@ def graph_vocabulary(g):
          "reach": {service: {every service it depends on, at any depth}}},
         all lower-case. "reach" is for rules 5b, 17 and 18; "alerting" for 5b and 10b.
     """
-    def column(cypher):
-        return {row[0].lower() for row in g.ro_query(cypher).result_set if row[0]}
-    reach = {row[0].lower(): {n.lower() for n in row[1]} for row in g.ro_query(
-        f"MATCH (a:Service)-[:DEPENDS_ON*1..{tools.MAX_HOPS}]->(b:Service) "
-        "RETURN a.name, collect(DISTINCT b.name)").result_set}
-    return {"services": column("MATCH (s:Service) RETURN s.name"),
-            "people": column("MATCH (p:Person) RETURN p.name"),
-            "versions": column("MATCH (d:Deploy) RETURN DISTINCT d.version"),
-            "teams": column("MATCH (t:Team) RETURN t.name"),
-            "alerting": column("MATCH (a:Alert)-[:FIRED_ON]->(s:Service) "
-                               "WHERE NOT a.resolved RETURN DISTINCT s.name"),
-            "reach": reach}
+    def read():
+        def column(cypher):
+            return {row[0].lower() for row in g.ro_query(cypher).result_set if row[0]}
+        reach = {row[0].lower(): {n.lower() for n in row[1]} for row in g.ro_query(
+            f"MATCH (a:Service)-[:DEPENDS_ON*1..{tools.MAX_HOPS}]->(b:Service) "
+            "RETURN a.name, collect(DISTINCT b.name)").result_set}
+        return {"services": column("MATCH (s:Service) RETURN s.name"),
+                "people": column("MATCH (p:Person) RETURN p.name"),
+                "versions": column("MATCH (d:Deploy) RETURN DISTINCT d.version"),
+                "teams": column("MATCH (t:Team) RETURN t.name"),
+                "alerting": column("MATCH (a:Alert)-[:FIRED_ON]->(s:Service) "
+                                   "WHERE NOT a.resolved RETURN DISTINCT s.name"),
+                "reach": reach}
+
+    return cached(g, "vocabulary", read)
 
 
 def _section(text, name, flags=0):

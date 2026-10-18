@@ -32,6 +32,7 @@ import time
 
 from redis.exceptions import ResponseError
 
+import verify
 from db import get_graph
 
 # Time units in milliseconds, matching the epoch-ms timestamps in the graph.
@@ -423,6 +424,7 @@ def seed(g, now_ms=None, scale=None):
                             "RETURN count(DISTINCT componentId)").result_set[0][0]
     if components != 1:
         raise RuntimeError(f"seeded graph has {components} components, expected 1")
+    verify.clear_cache()  # name lists cached by verify.py are now stale
     return now_ms
 
 

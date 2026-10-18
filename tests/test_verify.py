@@ -162,3 +162,33 @@ def test_team_names_and_headings_are_not_people():
     vocab = {**VOCAB, "teams": {"payments", "catalog & logistics"}}
     answer = GOOD + "\n\nKey Observations: Team Payments owns it. Ranked By Betweenness Score."
     assert verify.check_answer(answer, STEPS, QUESTION, vocab) == []
+
+
+class _CountingGraph:
+    """Wraps a graph and counts the queries sent through it."""
+
+    def __init__(self, g):
+        self._g, self.name, self.calls = g, g.name, 0
+
+    def ro_query(self, *args, **kwargs):
+        self.calls += 1
+        return self._g.ro_query(*args, **kwargs)
+
+
+def test_vocabulary_is_fetched_once_and_cleared_by_seed():
+    """Repeated lookups cost no queries; re-seeding forgets the cached names."""
+    import seed
+    from db import get_graph
+    graph = get_graph("incidents_verify_cache_test")
+    seed.seed(graph)                       # clears the cache
+    counted = _CountingGraph(graph)
+    first = verify.graph_vocabulary(counted)
+    after_first = counted.calls
+    assert after_first > 0
+    assert verify.graph_vocabulary(counted) is first
+    assert verify.service_names(counted) == verify.service_names(counted)
+    assert counted.calls == after_first + 1      # only service_names' first fetch
+    seed.seed(graph)
+    verify.graph_vocabulary(counted)
+    assert counted.calls > after_first + 1
+    graph.delete()

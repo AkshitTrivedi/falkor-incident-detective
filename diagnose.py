@@ -126,7 +126,7 @@ def failing_services(g, question):
         Sorted list of service names (exact graph spelling).
     """
     q = question.lower()
-    names = [row[0] for row in g.ro_query("MATCH (s:Service) RETURN s.name").result_set]
+    names = verify.service_names(g)
     return sorted(n for n in names
                   if re.search(rf"(?<![\w-]){re.escape(n.lower())}(?![\w-])", q))
 
@@ -145,7 +145,7 @@ def unknown_services(g, question):
         Sorted list of the unknown names, as written in the question (lower case).
     """
     q = question.lower()
-    real = {row[0].lower() for row in g.ro_query("MATCH (s:Service) RETURN s.name").result_set}
+    real = {n.lower() for n in verify.service_names(g)}
     return sorted({w for w in verify._SERVICE_LIKE.findall(q)
                    if w not in real and w not in verify._NOT_SERVICES})
 
@@ -350,7 +350,7 @@ def aliased_services(g, question):
     """
     q = question.lower()
     found = set()
-    for (name,) in g.ro_query("MATCH (s:Service) RETURN s.name").result_set:
+    for name in verify.service_names(g):
         stems = {re.sub(r"-?service$", "", name)} | set(_EXTRA_ALIASES.get(name, ()))
         for stem in stems:
             if stem != name and len(stem) >= 3 and re.search(
