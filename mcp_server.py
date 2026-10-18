@@ -22,10 +22,13 @@ Claude Desktop (claude_desktop_config.json):
         "args": ["/abs/path/mcp_server.py"],
         "env": {"FALKORDB_URL": "falkor://localhost:6379"}}}}
 
-FALKORDB_URL and GRAPH_NAME work as in the web app (see db.py).
+FALKORDB_URL and GRAPH_NAME work as in the web app (see db.py), and are read
+from the project's .env when the client does not set them.
 """
 import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
@@ -33,6 +36,10 @@ import actions
 import seed
 import tools
 from db import get_graph
+
+# Clients start the server from their own folder, so read the project's .env
+# (FALKORDB_URL, GRAPH_NAME) by path; values the client sets win.
+load_dotenv(Path(__file__).with_name(".env"))
 
 mcp = MCPServer("incident-detective", instructions=(
     "Tools over a FalkorDB graph of microservices, their dependencies, recent deploys, open "
