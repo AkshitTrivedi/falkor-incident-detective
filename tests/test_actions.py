@@ -102,3 +102,12 @@ def test_action_routes(client):
 ])
 def test_action_routes_reject_bad_input(client, body):
     assert client.post("/api/actions/incident", json=body).status_code == 422
+
+
+def test_status_after_rollback_pages_the_owner_of_what_is_still_open(g):
+    """Live test: after the rollback, 'is everything ok?' fell back to raw tool rows."""
+    actions.rollback(g, *CAUSE)
+    answer = diagnose.rule_answer(g, "I just got paged, is everything ok?")["answer"]
+    assert "Already handled: INC-1 for fraud-check v3.1.0 (mitigated)" in answer
+    assert 'adservice "ad inventory cache miss rate high"' in answer
+    assert "Page: Storefront team for adservice, on call Maya Chen." in answer

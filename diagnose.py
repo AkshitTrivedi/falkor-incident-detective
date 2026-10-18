@@ -284,6 +284,10 @@ def _route(g, question, steps, model_steps):
         # deploy is the suspect if alerts sit on its chain.
         if only := _only_suspect(g):
             return _what_broke(g, only, q, steps, model_steps, unnamed=True)
+        # "Is everything ok?" after the cause was rolled back: report what was
+        # already done and what is still open, with who owns it.
+        if _step(steps, "recent_changes", g)["incidents"]:
+            return _status(g, steps)
     named = sorted(named, key=lambda n: q.find(n) if n in q else len(q))  # question order
     if named and _METRIC.search(q):
         return _metric(g, named, steps)
@@ -362,6 +366,37 @@ def aliased_services(g, question):
 # Everyday names for services whose name has no "service" suffix.
 _EXTRA_ALIASES = {"productcatalog": ["catalog", "product catalog"],
                   "adservice": ["ads"], "recommendation": ["recommendations"]}
+
+
+def _status(g, steps):
+    """State of play once an incident is on record: what was done, what is still open.
+
+    Live test after a rollback: "I just got paged, is everything ok?" had no
+    suspect deploy left, so the rules printed raw tool rows. This says the
+    incident is handled and pages the owner of each alert still open.
+    """
+    changes = _step(steps, "recent_changes", g)
+    lines = [_HEADER.strip()]
+    for inc in changes["incidents"]:
+        lines.append(f"Already handled: {inc['id']} for {inc['cause']} ({inc['status']}), "
+                     f"{inc['paged'] or 'nobody'} paged {inc['opened_minutes_ago']} min ago"
+                     + (f"; {inc['mitigation']}" if inc.get("mitigation") else "") + ".")
+    alerts = changes["alerts"]
+    if not alerts:
+        lines.append("Evidence: no open alerts in the last hour.")
+        return {"answer": "\n".join(lines), "decided": True, "steps": steps, "path": None}
+    live = [d for d in changes["deploys"] if "rolled_back_minutes_ago" not in d]
+    lines.append("Evidence: still open: " + "; ".join(
+        f'{a["service"]} "{a["message"]}" ({a["severity"]}, {a["minutes_ago"]} min ago)'
+        + ("" if any(d["service"] in _chain(g, a["service"]) for d in live)
+           else ", no recent deploy on its dependency chain")
+        for a in alerts) + ".")
+    owners = []
+    for svc in dict.fromkeys(a["service"] for a in alerts):
+        own = _step(steps, "who_to_page", g, svc)
+        owners.append(f"{own['team']} team for {svc}, on call {own['on_call'] or 'nobody listed'}")
+    lines.append("Page: " + "; ".join(owners) + ".")
+    return {"answer": "\n".join(lines), "decided": True, "steps": steps, "path": None}
 
 
 def _chain(g, svc):
