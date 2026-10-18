@@ -6,7 +6,7 @@ A model that sounds sure and is wrong is the main risk of an on-call agent. This
 
 | Layer | What it checks | How to run |
 |---|---|---|
-| **Unit tests** (276) | Tools against a real FalkorDB graph, the checker on hand-written good and bad answers, request routing, the verdict card | `python -m pytest -q` (needs local FalkorDB) |
+| **Unit tests** (288) | Tools against a real FalkorDB graph, the checker on hand-written good and bad answers, request routing, the verdict card, the actions and the MCP server | `python -m pytest -q` (needs local FalkorDB) |
 | **Checker false-positive scan** | The checker must not reject a *correct* answer. It is run over all 456 saved model answers in [`model-eval/`](model-eval/), with tool results rebuilt from the live graph | `python -m scripts.checker_scan` |
 | **End-to-end suite** (62 questions) | The whole app as a user sees it: answer text, verdict card, and the "checked" badge | `python evals/edge_cases.py <app url> out.jsonl [ids...]` |
 

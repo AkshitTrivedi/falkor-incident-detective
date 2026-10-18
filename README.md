@@ -1,6 +1,6 @@
 # Incident Detective
 
-**An on-call agent that walks a [FalkorDB](https://www.falkordb.com/) graph to tell you what broke, why, and who to page, then checks its own answer against the graph before showing it.**
+**An on-call agent that walks a [FalkorDB](https://www.falkordb.com/) graph to tell you what broke, why, and who to page, checks its own answer against the graph, then acts on it: it opens the incident, pages the on-call person and rolls back the bad deploy, and remembers what was done in the graph.**
 
 Built solo for Graph Hacks (WeMakeDevs × FalkorDB), Oct 15–18 2026. **Track 01: Agents That Act on Connected Data.**
 
@@ -14,6 +14,7 @@ Built solo for Graph Hacks (WeMakeDevs × FalkorDB), Oct 15–18 2026. **Track 0
 
 - **Problem.** At 3 a.m. the question is never "what is the CPU?". It is *which of the 20 services upstream is really at fault, did a deploy cause it, and who owns it?* That is a connected-data question: services call services, deploys land on services, alerts fire on services, teams own services.
 - **How it works.** An LLM investigates through six fixed, read-only graph tools. It never writes Cypher. Every Cypher query that ran is shown next to the answer.
+- **It acts, with a person in charge.** Under a root cause the card offers *Open incident* (pages the owner's on-call) and *Roll back*. Each needs two clicks. The server works out who to page and which alerts clear from the graph, writes an `Incident` node, and the next question, in this session or the next, sees it: "Priya Nair was already paged for INC-1". The same tools and actions are available over **MCP** ([`mcp_server.py`](mcp_server.py)).
 - **Why trust it.** A 26-rule checker compares every sentence of the answer with what the graph returned. Made-up people, services, versions, numbers, backwards dependencies and false "not in the graph" denials are caught. A bad answer gets one retry. If that fails too, a rules-only diagnosis answers with no model at all.
 
 ## Try it in five commands
@@ -72,7 +73,8 @@ flowchart LR
     C2 -- fail --> D
     A -. "all models down<br/>or 90 s deadline" .-> D
     D[Rules diagnosis<br/>no model, same tools] --> OUT
-    OUT([Verdict card + graph path<br/>+ the Cypher that ran])
+    OUT([Verdict card + graph path<br/>+ the Cypher that ran]) -- "two clicks" --> ACT[Open incident / Roll back<br/>actions.py writes to the graph]
+    ACT -. "Incident node:<br/>memory for the next question" .-> G
 ```
 
 1. **Scope.** Write requests ("delete all alerts"), off-topic chat, and questions whose only graph names are unknown are answered by rules straight away, with no model call.
@@ -80,6 +82,8 @@ flowchart LR
 3. **Checker.** [`verify.py`](verify.py) reads the answer next to the raw tool results. See [what it catches](#the-checker).
 4. **Fallback.** [`diagnose.py`](diagnose.py) works out the same answer with fixed rules over the same tools. It is labelled "Diagnosis by rules (no model)" in the UI, so you always know which path produced what you are reading.
 5. **Card.** The UI turns the answer into a verdict card, draws the path on the graph, and shows every step with the Cypher behind it. The badge reads "Checked against the graph" only when a tool actually ran.
+6. **Act.** Under a root cause, *Open incident* and *Roll back* (two clicks each) call [`actions.py`](actions.py), the only code besides the seed that writes. It takes just the blamed deploy; who to page (its owner's on-call) and which alerts clear (open alerts on its dependency chain that fired after it) come from the graph, so a request cannot page a stranger or clear the unrelated `adservice` alert. The model never calls these.
+7. **Remember.** `recent_changes` returns the incidents on record, so the next answer, from the model or the rules, says "already paged for INC-1" and "rolled back, alerts cleared" instead of starting over.
 
 ### The six tools
 
@@ -92,7 +96,23 @@ flowchart LR
 | `critical_services` | Which services are chokepoints? | `algo.betweenness`, `algo.pageRank` |
 | `who_to_page` | Who owns X, and who is on call? | `OPTIONAL MATCH` over `OWNS` and `MEMBER_OF` |
 
-All six run through `GRAPH.RO_QUERY` with a 3 s timeout, so the agent **cannot modify the graph** even if told to. Service names are validated first; an unknown name returns the list of real ones instead of an empty result.
+All six run through `GRAPH.RO_QUERY` with a 3 s timeout, so the agent **cannot modify the graph** even if told to. Service names are validated first; an unknown name returns the list of real ones instead of an empty result. An empty blast radius is reported as "the graph records no services that depend on X", not as "nothing breaks": it is a statement about what the graph covers.
+
+### Actions and MCP
+
+| Action | What it writes | Who decides |
+|---|---|---|
+| `open_incident(service, version)` | `(:Incident)-[:CAUSED_BY]->(:Deploy)`, `-[:AFFECTS]->` each alerting service on the chain, `-[:PAGED]->` the owner team's on-call person. Idempotent: nobody is paged twice. | A person, two clicks on the card |
+| `rollback(service, version)` | `Deploy.status = 'rolled_back'`; the chain's open alerts resolved (each tagged with what cleared it); the incident marked mitigated | A person, two clicks on the card |
+
+The demo data is synthetic, so a rollback changes the graph, not a real service.
+
+**MCP.** [`mcp_server.py`](mcp_server.py) exposes the six read tools and both actions over the Model Context Protocol, so Claude Desktop, Claude Code or any MCP client can investigate the same graph and choose the tools itself. Read tools are marked read-only and the actions as writes, so clients ask before running them.
+
+```bash
+pip install -r requirements-mcp.txt
+claude mcp add incident-detective -- $(pwd)/graph-hacks-env/bin/python $(pwd)/mcp_server.py
+```
 
 ## Why FalkorDB is essential
 
@@ -112,6 +132,9 @@ graph LR
     Deploy -- TO --> Service
     Alert -- FIRED_ON --> Service
     Service -- "DEPENDS_ON {weight = latency ms}" --> Service
+    Incident -- CAUSED_BY --> Deploy
+    Incident -- AFFECTS --> Service
+    Incident -- "PAGED {ts}" --> Person
 ```
 
 | Node | Properties |
@@ -120,7 +143,8 @@ graph LR
 | `Team` | `name` |
 | `Person` | `name`, `on_call` (boolean) |
 | `Deploy` | `id`, `version`, `ts` (epoch ms), `status` |
-| `Alert` | `id`, `severity`, `message`, `ts` (epoch ms), `resolved` |
+| `Alert` | `id`, `severity`, `message`, `ts` (epoch ms), `resolved`; after a rollback also `resolved_ts`, `resolved_by` |
+| `Incident` | `id` (INC-n), `status` (open, mitigated), `opened_ts`, `title`, `mitigation`. Written only by [`actions.py`](actions.py), when a person acts; the agent's memory |
 
 The demo graph has **22 services, 5 teams, 15 people, 41 deploys, 14 alerts and 27 `DEPENDS_ON` edges**, based on Google's Online Boutique plus a payments chain. Everything is synthetic. The longest chain is `api-gateway → frontend → checkoutservice → paymentservice → fraud-check → risk-model → feature-store`. The seed ([`seed.py`](seed.py)) builds three stories:
 
@@ -185,7 +209,7 @@ All numbers are from the code in this repository and can be reproduced with the 
 
 | Run | Cases | Passed | What it measures |
 |---|---|---|---|
-| Unit tests | 276 | 276 | Tools, checker, routing, card, no-key path |
+| Unit tests | 288 | 288 | Tools, checker, routing, card, no-key path, actions, MCP server |
 | Edge-case suite, no models (rules only) | 62 | 62 | Deterministic answers from the rules diagnosis |
 | Edge-case suite, live models | 62 | 62 | Full chain: real LLMs, checker, retry, card |
 | Checker over saved model answers | 456 | 42 rejected | All 42 read by hand: every one a real defect, no false positives |
@@ -247,7 +271,8 @@ Two things changed for the bigger graph. The UI shows only the services the answ
 - **The suite grades by keywords.** A keyword can pass a wrong answer. In an earlier run an answer listed `checkoutservice` as unrelated and still passed the grader; reading every answer by hand found it, and rule 5b now catches it. All answers in the results above were read by hand as well.
 - **The checker only knows what the tools return.** It cannot tell that an answer is badly worded or leaves out something useful, only that a claim is unsupported.
 - **Free tiers move.** Groq's free tier allows 200,000 tokens a day; once that is spent the chain continues on the next provider, which is slower. Model rankings were measured on one day from India.
-- **The agent only reads.** It cannot restart a service, roll back, or page anyone. It tells you who to page.
+- **Actions are simulated.** *Open incident* and *Roll back* write to the graph: the incident, who was paged, the rolled-back deploy, the cleared alerts. They do not call a pager or a deploy system; those are integrations a real install would add behind the same two functions. The model itself can only read; actions run only when a person clicks.
+- **Memory resets with the demo story.** The demo graph is re-seeded when its incident is more than 30 minutes old, which also clears incidents on record. `AUTO_RESEED=0` keeps them.
 - **No metrics.** The graph holds structure, deploys and alerts. Asked for CPU or memory, the agent says so rather than guess.
 
 ## Repository map
@@ -256,6 +281,8 @@ Two things changed for the bigger graph. The UI shows only the services the answ
 |---|---|
 | [`seed.py`](seed.py) | Builds the demo graph (re-runnable) |
 | [`tools.py`](tools.py) | The six read-only tools and their Cypher |
+| [`actions.py`](actions.py) | Open incident (pages on-call) and roll back: the only writes besides the seed |
+| [`mcp_server.py`](mcp_server.py) | The tools and actions over MCP |
 | [`agent.py`](agent.py) | LLM loop, provider fallback chain, retry, deadlines |
 | [`verify.py`](verify.py) | The 26-rule checker |
 | [`diagnose.py`](diagnose.py) | Rules-only diagnosis (no model) and request routing |
