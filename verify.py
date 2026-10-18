@@ -82,7 +82,7 @@ import tools
 # Section labels in the answer format the system prompt asks for, e.g.
 # "Root cause:", "**Page:**", "- Evidence (graph):". Same pattern as bakeoff.py.
 _LABEL = r"(?:^|\n)[*_#\s-]*(?:{})[^:\n]{{0,20}}:"
-_SECTION_NAMES = "root cause|evidence|unrelated|page"
+_SECTION_NAMES = "root cause|evidence|unrelated|already handled|page"
 
 # Looks like a service name: ends in "service" or a hyphenated infrastructure
 # word ("-db", "-api", "-gateway", "-cache"...). Ordinary hyphenated words

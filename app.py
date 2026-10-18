@@ -7,6 +7,10 @@ Routes:
   POST /api/ask     {"question": str} -> the agent's answer, its tool steps and
                     Cypher, plus a "summary" the UI uses to light up the graph
   GET  /api/health  whether FalkorDB answers
+  POST /api/actions/incident  {"service", "version"} -> open an incident for that deploy
+                    and page its owner's on-call person (actions.open_incident)
+  POST /api/actions/rollback  {"service", "version"} -> roll the deploy back and clear
+                    the alerts on its chain (actions.rollback)
   POST /api/client-error   browser JS errors, printed in the server terminal
   GET  /docs        FastAPI's interactive API docs
 
@@ -16,7 +20,8 @@ then open http://127.0.0.1:8000.
 
 Everything the UI shows comes from the graph or from agent.investigate(); this
 module only reshapes it. All queries here are read-only, except seed.ensure_fresh(),
-which re-seeds the demo graph when its story has gone stale.
+which re-seeds the demo graph when its story has gone stale, and the two action
+routes, which a person triggers by clicking a button under an answer.
 """
 import logging
 import os
@@ -27,6 +32,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+import actions
 import agent
 import diagnose
 import seed
@@ -70,6 +76,13 @@ class Ask(BaseModel):
                           examples=["checkoutservice is throwing 5xx errors. What broke?"])
 
 
+class Action(BaseModel):
+    """Body of POST /api/actions/*: the root-cause deploy the answer named."""
+    service: str = Field(min_length=1, max_length=100, pattern=r"^[\w.-]+$",
+                         examples=["fraud-check"])
+    version: str = Field(min_length=1, max_length=50, pattern=r"^[\w.-]+$", examples=["v3.1.0"])
+
+
 def _fresh_graph():
     """Return the graph handle, re-seeding the demo story first if it is stale.
 
@@ -111,7 +124,8 @@ def graph(minutes: int = 60):
     Returns:
         {"nodes": [service and deploy nodes, see build_graph()],
          "edges": [{"from", "to", "rel", "latency_ms"?}, ...],
-         "counts": {"services", "deploys", "alerts"}}
+         "counts": {"services", "deploys", "alerts"},
+         "incidents": recent_changes()'s incidents, newest first}
     """
     return build_graph(_fresh_graph(), minutes)
 
@@ -158,12 +172,41 @@ def build_graph(g, minutes=60):
     for d in recent["deploys"]:
         node = f"deploy:{d['service']}@{d['version']}"
         nodes.append({"id": node, "label": d["version"], "kind": "deploy", "service": d["service"],
-                      "version": d["version"], "by": d["by"], "minutes_ago": d["minutes_ago"]})
+                      "version": d["version"], "by": d["by"], "minutes_ago": d["minutes_ago"],
+                      "rolled_back": "rolled_back_minutes_ago" in d})
         edges.append({"from": node, "to": f"svc:{d['service']}", "rel": "TO"})
 
     return {"nodes": nodes, "edges": edges,
             "counts": {"services": len(services), "deploys": len(recent["deploys"]),
-                       "alerts": len(recent["alerts"])}}
+                       "alerts": len(recent["alerts"])},
+            "incidents": recent["incidents"]}
+
+
+def _acted(result):
+    """Return an action's result, or a 404 when the deploy it names does not exist."""
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    log.info("action: %s", result)
+    return result
+
+
+@app.post("/api/actions/incident")
+def open_incident(body: Action):
+    """Open an incident for the deploy and page its owner's on-call person.
+
+    The person to page comes from the graph (actions.open_incident), not from
+    the request. Calling it again for the same deploy returns the same incident.
+    """
+    return _acted(actions.open_incident(get_graph(), body.service, body.version))
+
+
+@app.post("/api/actions/rollback")
+def rollback(body: Action):
+    """Roll the deploy back and resolve the alerts on its dependency chain.
+
+    The data is synthetic: this changes the graph, not a real service.
+    """
+    return _acted(actions.rollback(get_graph(), body.service, body.version))
 
 
 @app.post("/api/client-error", status_code=204)

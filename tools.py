@@ -189,9 +189,14 @@ def recent_changes(g, minutes=60, now_ms=None):
             tests pass a fixed value so results do not depend on the clock.
 
     Returns:
-        {"deploys": [{"service", "version", "by", "minutes_ago"}, ...],
+        {"deploys": [{"service", "version", "by", "minutes_ago",
+                      "rolled_back_minutes_ago" (only if rolled back)}, ...],
          "alerts":  [{"service", "severity", "message", "minutes_ago"}, ...],
-         "cypher":  [deploy query, alert query]}
+         "incidents": [{"id", "status", "cause", "paged", "opened_minutes_ago",
+                        "mitigation"?}, ...]   # newest first, at most 5
+         "cypher":  [deploy query, alert query, incident query]}
+        "incidents" is the agent's memory: what an on-call person already did
+        about a deploy (actions.py), so it does not page them twice.
 
     Example (Story A):
         recent_changes(g)["deploys"]
@@ -201,18 +206,38 @@ def recent_changes(g, minutes=60, now_ms=None):
     now_ms = now_ms or int(time.time() * 1000)
     params = {"since": now_ms - minutes * 60_000}
     deploy_q = ("MATCH (p:Person)-[:DEPLOYED]->(d:Deploy)-[:TO]->(s:Service) WHERE d.ts >= $since "
-                "RETURN s.name, d.version, p.name, d.ts ORDER BY d.ts DESC LIMIT 20")
+                "RETURN s.name, d.version, p.name, d.ts, d.rolled_back_ts ORDER BY d.ts DESC LIMIT 20")
     # Resolved alerts are left out: they are background noise, not the incident.
     alert_q = ("MATCH (a:Alert)-[:FIRED_ON]->(s:Service) WHERE a.ts >= $since AND NOT a.resolved "
                "RETURN s.name, a.severity, a.message, a.ts ORDER BY a.ts DESC LIMIT 20")
+    incident_q = ("MATCH (i:Incident)-[:CAUSED_BY]->(d:Deploy)-[:TO]->(s:Service) "
+                  "OPTIONAL MATCH (i)-[:PAGED]->(p:Person) "
+                  "RETURN i.id, i.status, s.name + ' ' + d.version, p.name, i.opened_ts, i.mitigation "
+                  "ORDER BY i.opened_ts DESC LIMIT 5")
+
+    def deploy(s, v, p, ts, back):
+        """One deploy row; the rollback age only when it was rolled back."""
+        row = {"service": s, "version": v, "by": p, "minutes_ago": _minutes_ago(now_ms, ts)}
+        if back:
+            row["rolled_back_minutes_ago"] = _minutes_ago(now_ms, back)
+        return row
+
+    def incident(i, status, cause, paged, ts, mitigation):
+        """One incident row; "mitigation" only once something was done."""
+        row = {"id": i, "status": status, "cause": cause, "paged": paged,
+               "opened_minutes_ago": _minutes_ago(now_ms, ts)}
+        if mitigation:
+            row["mitigation"] = mitigation
+        return row
+
     return {
-        "deploys": [{"service": s, "version": v, "by": p, "minutes_ago": _minutes_ago(now_ms, ts)}
-                    for s, v, p, ts in _run(g, deploy_q, params)],
+        "deploys": [deploy(*r) for r in _run(g, deploy_q, params)],
         "alerts": [{"service": s, "severity": sev, "message": m,
                     "minutes_ago": _minutes_ago(now_ms, ts)}
                    for s, sev, m, ts in _run(g, alert_q, params)],
-        "cypher": [deploy_q, alert_q],
-        "params": params,   # the same values for both queries
+        "incidents": [incident(*r) for r in _run(g, incident_q)],
+        "cypher": [deploy_q, alert_q, incident_q],
+        "params": params,   # the same values for every query that uses them
     }
 
 

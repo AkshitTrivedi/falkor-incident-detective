@@ -433,12 +433,29 @@ def _what_broke(g, failing, q, steps, model_steps, unnamed=False):
         clears = related + effects
         lines.append(f"Rollback: rolling back {cause['service']} {cause['version']} should clear "
                      + ("; ".join(map(alert, clears)) if clears else "no open alerts") + ".")
-    lines += [
-        "Unrelated: " + ("; ".join(alert(a) + f", no dependency path to or from {failing}"
-                                   for a in unrelated) or "none"),
-        f"Page: {page['team']} team, on call {page['on_call'] or 'nobody listed'}.",
-    ]
+    lines.append("Unrelated: " + ("; ".join(alert(a) + f", no dependency path to or from {failing}"
+                                            for a in unrelated) or "none"))
+    lines += _memory(changes, cause, page)
     return {"answer": "\n".join(lines), "decided": True, "steps": steps, "path": path}
+
+
+def _memory(changes, cause, page):
+    """The Page line, saying what was already done when an incident is on record.
+
+    Incidents come from actions.py (a person clicked "Open incident" or "Roll
+    back"); recent_changes returns them, so the rules remember them too.
+    """
+    who = f"{page['team']} team, on call {page['on_call'] or 'nobody listed'}"
+    inc = next((i for i in changes.get("incidents", [])
+                if i["cause"] == f"{cause['service']} {cause['version']}"), None)
+    if not inc:
+        return [f"Page: {who}."]
+    done = (f"Already handled: {inc['id']} opened {inc['opened_minutes_ago']} min ago, "
+            f"{inc['paged'] or 'nobody'} paged")
+    if "rolled_back_minutes_ago" in cause:
+        done += (f"; {cause['service']} {cause['version']} rolled back "
+                 f"{cause['rolled_back_minutes_ago']} min ago, so its alerts have cleared")
+    return [done + ".", f"Page: {who} (already paged for {inc['id']}, no need to page again)."]
 
 
 def _no_deploy(g, failing, q, changes, steps):
@@ -565,8 +582,11 @@ def _blast(g, service, steps):
     lines = ["Diagnosis by rules (no model):",
              (f"Blast radius: if {service} goes down, {len(affected)} service"
               f"{'' if len(affected) == 1 else 's'} that depend on it can fail: {hit}." if affected
-              else f"Blast radius: no service in the graph depends on {service}, so only "
-                   f"{service} itself is down if it fails."),
+              # An empty walk says what the graph records, not that nothing can break
+              # (WeMakeDevs' own guide makes the same point).
+              else f"Blast radius: the graph records no services that depend on {service}. "
+                   f"That covers the dependencies the graph models; an unrecorded caller "
+                   f"could still break."),
              f"Page: {page['team']} team owns {service}, on call {page['on_call'] or 'nobody listed'}."]
     return {"answer": "\n".join(lines), "decided": True, "steps": steps, "path": None}
 

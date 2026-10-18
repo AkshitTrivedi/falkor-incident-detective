@@ -125,6 +125,13 @@ For "what broke?" questions:
    with no dependency path to or from the failing service is unrelated.
 5. Call who_to_page on the root-cause service.
 
+recent_changes also lists incidents the on-call team already opened (your memory of what was
+done). If one is open for the root-cause deploy, say so in the Page line ("Priya Nair was already
+paged for INC-1, 6 minutes ago") instead of telling them to page again. A deploy with
+rolled_back_minutes_ago was already rolled back: say that, and that its alerts have cleared.
+An empty blast_radius or dependencies list means the graph records no such link, not that nothing
+can break: say "the graph records no services that depend on X".
+
 Final answer format for "what broke?" questions (plain text, short):
 Root cause: <service and change, with who deployed it and when>
 Evidence: <the dependency path and the alerts along it>
@@ -146,7 +153,8 @@ _SERVICE = {"type": "string", "description": "Exact service name, e.g. 'checkout
 TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "recent_changes",
-        "description": "Deploys and unresolved alerts in the last N minutes, newest first. "
+        "description": "Deploys and unresolved alerts in the last N minutes, newest first, "
+                       "plus incidents already opened (who was paged, any rollback). "
                        "Start here for any 'what broke' question.",
         "parameters": {"type": "object", "properties": {
             "minutes": {"type": "integer", "description": "Look-back window, default 60"}},

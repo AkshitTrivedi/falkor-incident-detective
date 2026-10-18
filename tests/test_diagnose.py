@@ -176,7 +176,7 @@ def test_on_call_names_an_unknown_person(g):
     ("checkoutservice and cartservice both look odd", ["Root cause: fraud-check v3.1.0",
                                                        "cartservice: no dependency path to or from fraud-check"]),
     ("Customers can't complete orders. Who do I wake up?", ["Root cause: fraud-check v3.1.0", "Priya Nair"]),
-    ("What breaks if api-gateway goes down?", ["no service in the graph depends on api-gateway"]),
+    ("What breaks if api-gateway goes down?", ["the graph records no services that depend on api-gateway"]),
     # Wrong premise about who deployed what.
     ("Mei Lin deployed fraud-check v3.1.0, right?", ["Mei Lin has no deploy in the last hour"]),
     ("Why did Daniel Okafor's deploy to paymentservice break checkout?",

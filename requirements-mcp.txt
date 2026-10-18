@@ -1,0 +1,4 @@
+# Extra dependency for mcp_server.py only (the web app and Render do not need it).
+# Tested with the pinned versions in requirements.txt; install both:
+#   pip install -r requirements.txt -r requirements-mcp.txt
+mcp==2.3.0

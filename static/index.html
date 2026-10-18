@@ -182,6 +182,22 @@
   .page.none:hover { transform: none; }
   .page.none .bell { background: var(--faint); box-shadow: none; }
 
+  /* Actions under a root cause: two clicks each (arm, then confirm), see act(). */
+  .acts { display: flex; gap: 8px; margin: 0 12px 8px; flex-wrap: wrap; }
+  .act { flex: 1; min-width: 160px; display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: 9px;
+         border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: 500 13px var(--sans);
+         cursor: pointer; text-align: left; transition: border-color .15s ease, background .15s ease; }
+  .act:hover { border-color: var(--accent-line); }
+  .act small { display: block; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+  .act.arm { border-color: var(--accent); background: var(--accent-bg); }
+  .act.busy { opacity: .6; cursor: progress; }
+  .act.done { border-color: var(--ok-line); background: var(--ok-bg); cursor: default; }
+  .act.done b, .act.done svg { color: var(--ok-text); }
+  .acts-note { margin: 0 12px 12px; color: var(--faint); font-size: 11.5px; }
+  .actlog { margin: 0 12px 12px; padding: 9px 11px; border-radius: 9px; background: var(--ok-bg); border: 1px solid var(--ok-line);
+            font-size: 12.5px; line-height: 1.5; }
+  .actlog.err { background: var(--panel-2); border-color: var(--border); color: var(--muted); }
+
   /* Service names: small mono pills, clickable */
   .svc { font: 12px var(--mono); background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px;
          padding: 0 5px; cursor: pointer; white-space: nowrap; }
@@ -614,6 +630,7 @@ function stylesheet() {
     { selector: 'node[health = "medium"]', style: { 'border-color': C.medium, 'underlay-color': C.medium, 'underlay-opacity': .12 } },
     { selector: 'node[kind = "deploy"]', style: { 'shape': 'tag', 'background-color': C['accent-bg'], 'border-color': C.accent,
         'color': C['accent-text'], 'font-family': '"Geist Mono", ui-monospace, monospace', 'font-size': 13 } },
+    { selector: 'node[kind = "deploy"][?rolled_back]', style: { 'border-style': 'dashed', 'opacity': .5 } },
     { selector: 'node[kind = "team"]', style: { 'background-color': C['panel-2'], 'border-color': C.ok, 'font-weight': 600 } },
     { selector: 'node[kind = "person"]', style: { 'background-color': C['ok-bg'], 'border-color': C.ok, 'border-width': 2, 'font-weight': 600 } },
     { selector: 'edge', style: {
@@ -682,9 +699,11 @@ async function loadGraph() {
   $('svc-list').innerHTML = [...services].sort().map(s => `<option value="${esc(s)}">`).join('');
   $('empty')?.remove();
   const c = data.counts, bad = data.nodes.filter(n => n.health).length;
+  const open = (data.incidents || []).length;
   const sep = '<span class="sep">·</span>';
   setStatus(true, `<span class="stat num"><b>${c.services}</b> services${sep}<b>${c.deploys}</b> ${c.deploys === 1 ? 'deploy' : 'deploys'}`
-    + `${sep}<b>${c.alerts}</b> ${c.alerts === 1 ? 'alert' : 'alerts'} on <b>${bad}</b> ${bad === 1 ? 'service' : 'services'}${sep}last hour</span>`);
+    + `${sep}<b>${c.alerts}</b> ${c.alerts === 1 ? 'alert' : 'alerts'} on <b>${bad}</b> ${bad === 1 ? 'service' : 'services'}${sep}last hour</span>`
+    + (open ? `<span class="chip"><b>${open}</b> ${open === 1 ? 'incident' : 'incidents'}</span>` : ''));
 }
 
 /**
@@ -1271,18 +1290,87 @@ function verdictHtml(out) {
   // One page row per owner when no single cause ties the failing services
   // together; services with the same team and on-call share a row.
   const pages = cardPages(s);
+  const paged = s.root_cause && (lastResult(out, 'recent_changes')?.incidents || [])
+    .find(i => i.cause === `${s.root_cause.service} ${s.root_cause.version}`);
   pages.forEach((p, k) => {
+    const already = paged && paged.paged === p.on_call ? ` · already paged for ${esc(paged.id)}` : '';
     rows += p.on_call
       ? `<button class="page" type="button" data-page="${k}" title="Copy a page message for ${esc(p.on_call)}"><span class="bell">${icon('bell', 'sm')}</span>`
-        + `<div><b>Page ${esc(p.on_call)}</b><small>${esc(p.team)} team${p.service ? `, on call for ${esc(p.service)}` : ', on call'}</small></div>`
+        + `<div><b>Page ${esc(p.on_call)}</b><small>${esc(p.team)} team${p.service ? `, on call for ${esc(p.service)}` : ', on call'}${already}</small></div>`
         + `<span class="go">${icon('copy', 'sm')}Copy page</span></button>`
       : `<div class="page none"><span class="bell">${icon('bell', 'sm')}</span><div><b>Nobody on call</b><small>${p.service ? `${esc(p.team)} team owns ${esc(p.service)}` : `${esc(p.team)} team`}</small></div></div>`;
   });
+  if (s.root_cause) rows += actsHtml(out);
   const notice = s.missing?.length
     ? `<div class="notice">${icon('alert', 'sm')}<span>Not in the graph: <b>${s.missing.map(esc).join(', ')}</b>. `
       + `Anything below is about what the graph does have.</span></div>`
     : '';
   return `<div class="verdict">${notice}<div class="top${topCls}">${kind}${head}${sub ? `<div class="subline">${sub}</div>` : ''}</div>${rows}</div>`;
+}
+
+/**
+ * "Act on it" row under a root cause: open an incident (pages the owner's
+ * on-call) and roll the deploy back. The agent only recommends; these run only
+ * when a person clicks twice (see act()). What was already done comes from the
+ * graph (recent_changes' incidents), so a reloaded answer shows it as done.
+ */
+function actsHtml(out) {
+  const rc = out.summary.root_cause, who = out.summary.page?.on_call;
+  const cause = `${rc.service} ${rc.version}`;
+  const inc = (lastResult(out, 'recent_changes')?.incidents || []).find(i => i.cause === cause);
+  const opened = inc ? `<b>${esc(inc.id)} ${esc(inc.status)}</b><small>${esc(inc.paged || 'nobody')} paged ${inc.opened_minutes_ago} min ago</small>`
+                     : `<b>Open incident</b><small>${who ? `pages ${esc(who)}` : 'pages the owning team'}</small>`;
+  const back = inc?.mitigation ? `<b>Rolled back</b><small>${esc(cause)}</small>`
+                               : `<b>Roll back ${esc(rc.version)}</b><small>clears the alerts it caused</small>`;
+  return `<div class="vrow"><div class="section-label">Act on it · two clicks each</div></div><div class="acts">`
+    + `<button class="act${inc ? ' done' : ''}" type="button" data-act="incident">${icon(inc ? 'check' : 'bell', 'sm')}<span>${opened}</span></button>`
+    + `<button class="act${inc?.mitigation ? ' done' : ''}" type="button" data-act="rollback">${icon(inc?.mitigation ? 'check' : 'reset', 'sm')}<span>${back}</span></button></div>`
+    + `<div id="actlog"></div><div class="acts-note">Writes to the graph only (demo data); no real service is touched.</div>`;
+}
+
+/**
+ * Run one card action. First click arms the button ("click again to confirm"),
+ * the second posts to /api/actions/<kind>; the server works out who to page and
+ * which alerts clear from the graph. Then the graph is reloaded, so cleared
+ * alerts and the rolled-back deploy show at once.
+ */
+async function act(btn, out) {
+  if (btn.classList.contains('done') || btn.classList.contains('busy')) return;
+  const small = btn.querySelector('small');
+  if (!btn.classList.contains('arm')) {
+    const was = small.textContent;
+    btn.classList.add('arm'); small.textContent = 'click again to confirm';
+    btn._disarm = setTimeout(() => { btn.classList.remove('arm'); small.textContent = was; }, 4000);
+    return;
+  }
+  clearTimeout(btn._disarm);
+  btn.classList.remove('arm'); btn.classList.add('busy');
+  const rc = out.summary.root_cause, kind = btn.dataset.act, log = $('actlog');
+  try {
+    const r = await fetch(`/api/actions/${kind}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ service: rc.service, version: rc.version }) });
+    const res = await r.json();
+    if (!r.ok) throw new Error(res.detail || `HTTP ${r.status}`);
+    const inc = kind === 'incident' ? res : res.incident;
+    const incBtn = btn.parentNode.querySelector('[data-act="incident"]');
+    incBtn.classList.add('done');
+    incBtn.innerHTML = `${icon('check', 'sm')}<span><b>${esc(inc.id)} ${esc(inc.status)}</b><small>${esc(inc.paged || 'nobody')} paged</small></span>`;
+    let msg = `<b>${esc(inc.id)}</b> ${inc.existing ? 'was already open' : 'opened'}: ${esc(inc.team)} team, `
+      + `${inc.paged ? `<b>${esc(inc.paged)}</b> paged` : 'nobody on call to page'}. Affects ${inc.affects.map(x => pill(x)).join(' ') || 'no alerting service'}.`;
+    if (kind === 'rollback') {
+      btn.innerHTML = `${icon('check', 'sm')}<span><b>Rolled back</b><small>${esc(rc.service)} ${esc(rc.version)}</small></span>`;
+      msg = `<b>Rolled back ${esc(rc.service)} ${esc(rc.version)}</b> (${esc(inc.id)} mitigated). `
+        + (res.resolved.length ? `Cleared: ${res.resolved.map(a => pill(a.service)).join(' ')}. ` : 'No open alerts to clear. ')
+        + (res.still_open.length ? `Still open, not on its chain: ${res.still_open.map(a => pill(a.service)).join(' ')}.` : 'No alerts left open.');
+    }
+    btn.classList.add('done');
+    log.className = 'actlog'; log.innerHTML = msg;
+    await loadGraph();
+  } catch (e) {
+    log.className = 'actlog err'; log.textContent = `Could not ${kind === 'rollback' ? 'roll back' : 'open the incident'}: ${e.message}`;
+  } finally {
+    btn.classList.remove('busy');
+  }
 }
 
 /**
@@ -1402,6 +1490,7 @@ function renderResult(entry) {
   inv.querySelectorAll('[data-h]').forEach(b => b.onclick = () => renderResult(history[+b.dataset.h]));
   const pages = cardPages(out.summary);
   inv.querySelectorAll('[data-page]').forEach(b => b.onclick = () => copyPage(q, out, pages[+b.dataset.page], b));
+  inv.querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b, out));
   stopReplay();
   current = { out, list }; pos = -1;
   stage(out);
