@@ -73,6 +73,8 @@ _CHANGED = re.compile(r"\bwhat(?:'s| is)? (?:changed|happened|is going on|'s goi
                       r"|\bsomething(?:'s| is)? (?:off|up|wrong|weird|broken)\b|\bhealth\w*|\bon fire\b"
                       r"|\bsev ?[0-3]\b|\bp[0-2]\b|\bpaged\b|\bpager\b")
 _ROLLBACK = re.compile(r"\broll(?:ing|ed)?[\s-]*back|\brevert")
+# "Which incidents are there?", "any open incidents?": a list of incident records.
+_LIST_INCIDENTS = re.compile(r"\bincidents\b|\bopen incident\b|\bincident (?:list|history|log)\b")
 # Words that make a question about the incident graph. A question with none
 # of them and no service name ("hello there", "who is akshit?", "write me a
 # poem") gets _off_topic() instead of a dump of tool rows (live test, Oct 16).
@@ -279,6 +281,8 @@ def _route(g, question, steps, model_steps):
     if (not named and any(kind == "team" for kind, _ in unknown)
             and (_ON_CALL.search(q) or _OWNER.search(q)) and not _INCIDENT.search(q)):
         return _unknown_team(g, steps)
+    if not named and _LIST_INCIDENTS.search(q):
+        return _status(g, steps)
     if not named and (_INCIDENT.search(q) or _CHANGED.search(q)):
         # "Customers can't pay. What changed?": no service named. The one recent
         # deploy is the suspect if alerts sit on its chain.
@@ -369,7 +373,7 @@ _EXTRA_ALIASES = {"productcatalog": ["catalog", "product catalog"],
 
 
 def _status(g, steps):
-    """State of play once an incident is on record: what was done, what is still open.
+    """State of play: incidents on record, what was done, what is still open.
 
     Live test after a rollback: "I just got paged, is everything ok?" had no
     suspect deploy left, so the rules printed raw tool rows. This says the
@@ -377,6 +381,8 @@ def _status(g, steps):
     """
     changes = _step(steps, "recent_changes", g)
     lines = [_HEADER.strip()]
+    if not changes["incidents"]:
+        lines.append("Incidents: none opened yet.")
     for inc in changes["incidents"]:
         lines.append(f"Already handled: {inc['id']} for {inc['cause']} ({inc['status']}), "
                      f"{inc['paged'] or 'nobody'} paged {inc['opened_minutes_ago']} min ago"

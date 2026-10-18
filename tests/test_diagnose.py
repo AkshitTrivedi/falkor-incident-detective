@@ -4,6 +4,7 @@ No LLM is involved, so these are fast and free. They need the local FalkorDB.
 """
 import pytest
 
+import actions
 import diagnose
 from db import get_graph
 from seed import seed
@@ -206,6 +207,20 @@ def test_plural_incidents_is_on_topic(g, question):
     """Live UI, Oct 18: "which incidents are there?" was refused as off-topic."""
     out = diagnose.rule_answer(g, question)
     assert out["steps"] and "I can only answer" not in out["answer"]
+    assert "Incidents: none opened yet." in out["answer"]
+
+
+def test_incident_list_names_the_open_incident():
+    """Once an incident is open, the list question reports it, not a fresh diagnosis."""
+    graph = get_graph("incidents_list_test")
+    seed(graph)
+    try:
+        inc = actions.open_incident(graph, "fraud-check", "v3.1.0")
+        answer = diagnose.rule_answer(graph, "which incidents are there?")["answer"]
+        assert f"Already handled: {inc['id']} for fraud-check" in answer, answer
+        assert "Incidents: none opened yet." not in answer
+    finally:
+        graph.delete()
 
 
 def test_several_services_none_explained_get_one_block_each(g):
