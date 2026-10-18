@@ -60,6 +60,7 @@ passed. The rules are deliberately narrow, so a correct answer is not flagged:
  18. "X depends on Y" (or "Yes" to "does X depend on Y") must match the
      graph's direction.
  19. A failure question that pages someone must have run recent_changes.
+     19b. And it must name the recent deploy on the failing service's chain.
  20. "Most critical" must use the betweenness ranking.
  21. "Should we roll back X?" must be answered yes or no.
 

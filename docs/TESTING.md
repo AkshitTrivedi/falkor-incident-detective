@@ -68,6 +68,7 @@ Plus two global checks: no person outside the graph is named, and after the inje
 | 17 | A root-cause deploy must be on the named services' dependency chain | "cartservice and adservice are failing" blamed `fraud-check`, which neither reaches |
 | 18 | "X depends on Y" must match the graph's direction | "Yes, payments-db depends on checkoutservice" |
 | 19 | A failure question that pages someone must have run `recent_changes` | Paging `checkoutservice`'s owner without looking for the cause, a Payments deploy |
+| 19b | ...and before paging, it must name the recent deploy on the failing service's chain | Live UI run (A6): Nemotron paged the checkout owner and never mentioned the `fraud-check` v3.1.0 deploy |
 | 20 | "Most critical" must use the betweenness ranking | Ranked by PageRank only and listed leaf databases |
 | 21 | "Should we roll back X?" needs a yes or no | A root cause with no verdict, whose only "no" was in "(no index)" |
 

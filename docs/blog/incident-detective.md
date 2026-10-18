@@ -18,7 +18,7 @@ Which deploy broke it? Is the adservice alert part of this, or noise? Who do I w
 > **TL;DR**
 > - Six fixed, read-only Cypher tools. The model picks them; it never writes a query.
 > - It finds the bad deploy across hops with `algo.SPpaths`, and proves the loud alert is unrelated because no path exists.
-> - A 26-rule checker rejects any claim the graph doesn't support. Wrong twice, and a rules-only diagnosis answers instead.
+> - A 27-rule checker rejects any claim the graph doesn't support. Wrong twice, and a rules-only diagnosis answers instead.
 > - With two clicks it opens the incident, pages the right person and rolls back. It remembers what it did as nodes in the graph.
 
 **Try it:** [incident-detective.onrender.com](https://incident-detective.onrender.com) (free tier, the first load can take about 50 seconds) · **Code:** [github.com/AkshitTrivedi/falkor-incident-detective](https://github.com/AkshitTrivedi/falkor-incident-detective)

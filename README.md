@@ -12,10 +12,10 @@ Built solo for Graph Hacks (WeMakeDevs × FalkorDB), Oct 15–18 2026. **Track 0
 
 ## The 30-second pitch
 
-- **Problem.** At 3 a.m. the question is never "what is the CPU?". It is *which of the 20 services upstream is really at fault, did a deploy cause it, and who owns it?* That is a connected-data question: services call services, deploys land on services, alerts fire on services, teams own services.
+- **Problem.** At 3 a.m. the question is never "what is the CPU?". It is *which of the services it depends on is really at fault, did a deploy cause it, and who owns it?* That is a connected-data question: services call services, deploys land on services, alerts fire on services, teams own services.
 - **How it works.** An LLM investigates through six fixed, read-only graph tools. It never writes Cypher. Every Cypher query that ran is shown next to the answer.
 - **It acts, with a person in charge.** Under a root cause the card offers *Open incident* (pages the owner's on-call) and *Roll back*. Each needs two clicks. The server works out who to page and which alerts clear from the graph, writes an `Incident` node, and the next question, in this session or the next, sees it: "Priya Nair was already paged for INC-1". The same tools and actions are available over **MCP** ([`mcp_server.py`](mcp_server.py)).
-- **Why trust it.** A 26-rule checker compares every sentence of the answer with what the graph returned. Made-up people, services, versions, numbers, backwards dependencies and false "not in the graph" denials are caught. A bad answer gets one retry. If that fails too, a rules-only diagnosis answers with no model at all.
+- **Why trust it.** A 27-rule checker compares every sentence of the answer with what the graph returned. Made-up people, services, versions, numbers, backwards dependencies and false "not in the graph" denials are caught. A bad answer gets one retry. If that fails too, a rules-only diagnosis answers with no model at all.
 
 ## Try it in five commands
 
@@ -284,7 +284,7 @@ Two things changed for the bigger graph. The UI shows only the services the answ
 | [`actions.py`](actions.py) | Open incident (pages on-call) and roll back: the only writes besides the seed |
 | [`mcp_server.py`](mcp_server.py) | The tools and actions over MCP |
 | [`agent.py`](agent.py) | LLM loop, provider fallback chain, retry, deadlines |
-| [`verify.py`](verify.py) | The 26-rule checker |
+| [`verify.py`](verify.py) | The 27-rule checker |
 | [`diagnose.py`](diagnose.py) | Rules-only diagnosis (no model) and request routing |
 | [`app.py`](app.py), [`static/index.html`](static/index.html) | FastAPI server and the single-page UI |
 | [`evals/edge_cases.py`](evals/edge_cases.py) | The 62-question end-to-end suite |
