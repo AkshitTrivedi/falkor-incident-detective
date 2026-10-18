@@ -12,7 +12,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.15
       # Paste these in the Render dashboard; sync:false keeps them out of git.
-      - key: FALKORDB_URL        # falkors://user:pass@host:port from FalkorDB Cloud
+      - key: FALKORDB_URL        # falkor://user:pass@host:port from FalkorDB Cloud (free tier: no TLS; URL-encode @ in the password as %40)
         sync: false
       - key: GROQ_API_KEY
         sync: false
