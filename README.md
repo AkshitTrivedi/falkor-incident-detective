@@ -259,7 +259,7 @@ The 62 questions cover the three stories (14), red herrings (3), blast radius (5
 |---|---|
 | Edge-case suite, no models | 60 / 62 |
 | Edge-case suite, live models | 60 / 62 |
-| All 62 questions typed into the UI in a real browser (Playwright) | 62 / 62 rendered, no console errors |
+| All 62 questions typed into the UI in a real browser (Playwright) | 62 / 62 rendered, no console errors; every card cross-checked against its API response, 0 flags ([how](docs/TESTING.md#the-card-tested-in-a-real-browser-18-oct-2026)) |
 
 The two misses in both runs are K1 and K2 ("which services are most critical?"). The grader expects the demo's `paymentservice` and `checkoutservice`; at this size the synthetic chokepoints really do rank higher (`seller-worker` scores 92.8 on betweenness, while `checkoutservice` ranks 19th), and the answers say so. Every live answer was read by hand, and each count was checked against the graph: `payments-db` reaches 47 services, `fraud-check` 35, `redis-cart` 44, `feature-store` 56. An earlier run here gave "49 services" where the tool returned 47; checker rule 10c now catches a count no tool returned.
 

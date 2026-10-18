@@ -126,6 +126,26 @@ What the bigger graph found:
 - **Unreadable lists.** A misspelt service listed all 300 names, and "did you mean" matched `pricing-service` for `billing-service`. Now: six nearest names, and "did you mean" only above a 0.85 similarity.
 - **Unreadable map.** The UI drew a 300-node graph 14,835 px tall. It now shows only the services each answer touches. Browser screenshots found two answers that still fell back to the full map, "Does cartservice depend on payments-db?" (no path, so no services returned) and "Who is on call for payments?" (team only). Both now show the services they name.
 
+## The card, tested in a real browser (18 Oct 2026)
+
+The end-to-end suite checks answer *text*. A person reads the *card*: headline, failure path, reasoning line, page row, Act buttons, graph. So on 18 Oct all 62 questions were typed into the UI in a real browser (Playwright) and each card was cross-checked against the API response it was built from. Scripts: [`scripts/ui_check/`](../scripts/ui_check/) (`ask_all_in_browser.js` records the cards, `cross_check.py` compares them).
+
+`cross_check.py` flags: reasoning-line numbers that do not match the steps (tool calls, deepest hop, queries, ms); a root cause whose failure path does not reach the blamed service; Act buttons missing on, or shown without, a root cause; a page row naming someone the tools did not return as on call; console errors; a service called "not related" that sits on the root cause's chain.
+
+What it and hand reading found, each fixed with a test:
+
+| Found | Fix |
+|---|---|
+| Failure path drawn to the wrong service | Path is chosen to reach the blamed service; if no step did, a `dependency_path` step is added |
+| "Roll back" question acted on the wrong deploy | The card acts on the deploy the question names |
+| "No recent deploy" prose still got a root-cause card | Prose that says there is no cause counts as a no-cause answer |
+| Empty blast radius read as "nothing breaks" | Says "no recorded dependents", and that an unrecorded caller could still break |
+| Nemotron paged the checkout owner without mentioning the `fraud-check` deploy (A6, found by reading) | Checker rule 19b |
+
+Final run: 62 cards, 0 flags, 0 console errors.
+
+**Live site.** The same suite ran against the deployed app (Render plus FalkorDB Cloud): 61 / 62 on the first run (F3 was wording, since fixed) and 60 / 62 on the action build (C1 card, F3). Open incident and Roll back were also run end to end on Render: the incident is written, the alerts resolve, and later answers say "already paged for INC-1".
+
 ## Beyond the checker: routing questions that need no model
 
 [`diagnose.py`](../diagnose.py) answers some questions by rules before any model is asked, because a model can only make them worse: write requests ("delete all alerts"), off-topic chat, questions whose only graph names are unknown ("billing-service is down"), and "who is <person>". The same rules answer when every model fails or the 90-second question deadline passes. Its answers are labelled "Diagnosis by rules (no model)".
