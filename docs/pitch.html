@@ -44,6 +44,20 @@
          border-radius: 6px; padding: .05em .4em; color: var(--text); }
   .sub { max-width: 52ch; }
 
+  /* Slide 1: text on the left, the incident drawn as a graph on the right. */
+  .hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 3vw; align-items: center; }
+  .hero svg { width: 100%; max-height: 62vh; filter: drop-shadow(0 0 40px rgba(62,99,221,.18)); }
+  .hn { fill: var(--panel-2); stroke: #3a3f45; stroke-width: 1.5; }
+  .hn.bad  { fill: var(--bad-bg);  stroke: var(--bad);  } .hn.warn { fill: var(--warn-bg); stroke: var(--warn); }
+  .hn.cause { fill: var(--accent-bg); stroke: var(--accent-text); stroke-width: 2.5; }
+  .hn.noise { stroke-dasharray: 5 5; }
+  .ht { fill: var(--text); font: 600 15px var(--sans); text-anchor: middle; }
+  .hs { fill: var(--muted); font: 12px var(--sans); text-anchor: middle; }
+  .he { stroke: #5b6168; stroke-width: 1.8; fill: none; }
+  .he.hot { stroke: var(--bad); stroke-width: 3; stroke-dasharray: 8 6; animation: flow 1.2s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -28; } }
+  .tag { fill: var(--accent-text); font: 600 12px var(--sans); text-anchor: middle; letter-spacing: .08em; }
+
   /* Slide 2: the pain, as the chatter an on-call engineer faces. */
   .alerts { display: grid; gap: 1.4vh; max-width: 46ch; margin-top: 1vh; }
   .alert { display: flex; align-items: center; gap: 12px; padding: 1.3vh 16px; border-radius: 10px;
@@ -107,10 +121,25 @@
 
 <!-- 1. Title -->
 <section class="slide on">
-  <div class="kicker">Graph Hacks · Track 01 · Agents That Act on Connected Data</div>
-  <h1>Incident <span class="accent">Detective</span></h1>
-  <p class="sub"><b>An on-call agent that walks a FalkorDB graph</b> to tell you what broke, why, and who to page, then checks its own answer against the graph before showing it.</p>
-  <p>Built solo · FalkorDB · Cypher · six read-only tools</p>
+  <div class="hero">
+    <div>
+      <div class="kicker">Graph Hacks · Track 01 · Agents That Act on Connected Data</div>
+      <h1>Incident <span class="accent">Detective</span></h1>
+      <p class="sub"><b>An on-call agent that walks a FalkorDB graph</b> to tell you what broke, why, and who to page, then checks its own answer against the graph before showing it.</p>
+      <p>Built solo · FalkorDB · Cypher · six read-only tools</p>
+    </div>
+    <!-- The demo incident as the agent sees it: a deploy at the end of a dependency chain,
+         alerts rippling up it, and one unrelated alert with no path to the chain. -->
+    <svg viewBox="0 0 520 470" role="img" aria-label="fraud-check v3.1.0 deploy causes payments-db, paymentservice and checkoutservice alerts; adservice alert is unrelated">
+      <rect class="hn bad"  x="150" y="12"  width="220" height="62" rx="12"/><text class="ht" x="260" y="38">checkoutservice</text><text class="hs" x="260" y="58">HTTP 5xx rate 23%</text>
+      <rect class="hn warn" x="150" y="112" width="220" height="62" rx="12"/><text class="ht" x="260" y="138">paymentservice</text><text class="hs" x="260" y="158">p99 latency 4.2 s</text>
+      <rect class="hn cause" x="150" y="212" width="220" height="62" rx="12"/><text class="ht" x="260" y="238">fraud-check</text><text class="hs" x="260" y="258">v3.1.0 · Daniel Okafor</text>
+      <rect class="hn bad"  x="150" y="312" width="220" height="62" rx="12"/><text class="ht" x="260" y="338">payments-db</text><text class="hs" x="260" y="358">CPU 98%</text>
+      <path class="he hot" d="M260 312 L260 276"/><path class="he hot" d="M260 212 L260 176"/><path class="he hot" d="M260 112 L260 76"/>
+      <text class="tag" x="440" y="248">ROOT CAUSE</text><path class="he" d="M372 243 L398 243" style="stroke:var(--accent-text)"/>
+      <rect class="hn noise warn" x="150" y="410" width="220" height="50" rx="12" style="opacity:.55"/><text class="ht" x="260" y="432" style="opacity:.7">adservice</text><text class="hs" x="260" y="450" style="opacity:.7">unrelated: no path to the chain</text>
+    </svg>
+  </div>
 </section>
 
 <!-- 2. The problem -->
