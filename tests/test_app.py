@@ -195,6 +195,20 @@ def test_summary_reads_unrelated_from_prose(g):
     assert "paymentservice" in s["related"]
 
 
+def test_summary_reads_a_separate_issue_as_unrelated(g):
+    """C1, live Oct 18 (StepFun): "Unrelated. ... The adservice alert (...) is a
+    separate issue from the checkout outage" left the card's Not related empty."""
+    steps = [{"tool": "dependencies", "args": {"service": "checkoutservice"},
+              "result": tools.dependencies(g, "checkoutservice")}]
+    out = {"answer": "Unrelated. The graph records no dependency path between checkoutservice and "
+                     "adservice in either direction. The adservice alert (\"ad inventory cache miss "
+                     "rate high\", 10 minutes ago) is a separate issue from the checkout outage.",
+           "steps": steps, "path": None}
+    s = app.summarize(out, verify.graph_vocabulary(g),
+                      "There is also an alert on adservice. Is it related to the checkout outage?")
+    assert s["unrelated"] == ["adservice"]
+
+
 def test_summary_blames_nothing_when_the_cause_line_clears_the_deploy(g):
     """C3, live Oct 16 (StepFun): the cause line names fraud-check v3.1.0 only
     to say it has no dependency path to adservice; the card must not blame it."""

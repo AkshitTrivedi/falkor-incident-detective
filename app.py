@@ -322,7 +322,8 @@ def summarize(out, vocab, question=""):
         # No "Unrelated:" line, so read prose: "the adservice alert is
         # unrelated to the checkout outage" names adservice before the word.
         for sent in re.split(r"(?<=[.!?])\s+|\n", answer):
-            m = re.search(r"\b(?:unrelated|not related|separate incident)\b", sent)
+            # Live C1, Oct 18: "The adservice alert (...) is a separate issue".
+            m = re.search(r"\b(?:unrelated|not related|separate (?:incident|issue|problem))\b", sent)
             if m:
                 named |= verify._mentions(sent[:m.start()], vocab["services"])
     # The answer's verdict wins for a service a tool was only asked about,
