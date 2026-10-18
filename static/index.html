@@ -182,6 +182,32 @@
   .page.none:hover { transform: none; }
   .page.none .bell { background: var(--faint); box-shadow: none; }
 
+  /* Reasoning trace: the steps the agent took, each with the FalkorDB feature it used
+     and a hop gauge (filled segments = how deep the traversal went, out of MAX_HOPS). */
+  .reasonline { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .reasonline b { color: var(--text); font-weight: 600; }
+  .reason { margin: 14px 0 4px; }
+  .reason p { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+  .reason p b { color: var(--text); font-weight: 600; }
+  .rs-list { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .rs { display: grid; grid-template-columns: 18px 1fr auto; gap: 1px 10px; align-items: center; width: 100%; padding: 8px 10px;
+        background: none; border: 0; border-top: 1px solid var(--border); color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+  .rs:first-child { border-top: 0; }
+  .rs:hover, .rs:focus-visible { background: var(--panel-2); outline: none; }
+  .rs:focus-visible { box-shadow: inset 2px 0 0 var(--accent); }
+  .rs .n { grid-row: 1 / 3; color: var(--faint); font: 12px var(--mono); }
+  .rs .t { font: 500 12.5px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rs .t span { color: var(--muted); font-weight: 400; }
+  .rs .found { grid-column: 2; color: var(--muted); font-size: 12px; }
+  .rs .feat { grid-column: 2; color: var(--faint); font-size: 11.5px; }
+  .gauge { grid-column: 3; grid-row: 1 / 4; display: flex; gap: 2px; align-items: center; }
+  .gauge i { width: 5px; height: 14px; border-radius: 1.5px; background: var(--border-2); }
+  .gauge i.on { background: var(--accent-text); box-shadow: 0 0 6px -1px var(--accent); }
+  .gauge b { margin-left: 6px; font: 12px var(--mono); color: var(--accent-text); font-weight: 500; }
+  .navlinks { display: flex; gap: 14px; margin-left: 18px; font-size: 12.5px; }
+  .navlinks a { color: var(--muted); text-decoration: none; }
+  .navlinks a:hover, .navlinks a:focus-visible { color: var(--text); outline: none; text-decoration: underline; text-underline-offset: 3px; }
+
   /* Actions under a root cause: two clicks each (arm, then confirm), see act(). */
   .acts { display: flex; gap: 8px; margin: 0 12px 8px; flex-wrap: wrap; }
   .act { flex: 1; min-width: 160px; display: flex; align-items: center; gap: 9px; padding: 9px 11px; border-radius: 9px;
@@ -397,24 +423,29 @@
 <header>
   <h1 class="brand"><span class="logo" aria-hidden="true">🕵️</span>Incident <span class="accent">Detective</span><span class="by-falkor">on FalkorDB</span></h1>
   <div class="status" id="status"><span class="chip live"><span class="dot"></span>connecting…</span></div>
+  <nav class="navlinks" aria-label="Project links">
+    <a href="/pitch" target="_blank" rel="noopener">Slides</a>
+    <a href="https://github.com/AkshitTrivedi/falkor-incident-detective" target="_blank" rel="noopener">Source</a>
+  </nav>
 </header>
 <main>
   <section class="side" aria-label="Investigation">
     <div class="scroll" id="panel">
       <div class="intro" id="intro">
         <h2>What broke, why, and who to page.</h2>
-        <p>Ask about an incident. The agent answers only from the service graph, using fixed read-only queries, and every claim is checked against what they returned.</p>
+        <p>Ask about an incident. Every answer comes from the service graph, and every claim is checked against it.</p>
         <div class="examples">
-          <button class="example" style="--c:var(--critical)" data-q="checkoutservice is throwing 5xx errors. What broke?"><span class="ico" data-icon="zap"></span><span><b>checkoutservice is throwing 5xx errors. What broke?</b><small>Root cause and who to page</small></span></button>
-          <button class="example" style="--c:var(--high)" data-q="What breaks if payments-db goes down?"><span class="ico" data-icon="network"></span><span><b>What breaks if payments-db goes down?</b><small>Blast radius</small></span></button>
-          <button class="example" style="--c:#8e7cf0" data-q="Which services are most critical?"><span class="ico" data-icon="target"></span><span><b>Which services are most critical?</b><small>Betweenness centrality</small></span></button>
-          <button class="example" style="--c:var(--medium)" data-q="Is the adservice alert related to the checkout errors?"><span class="ico" data-icon="search"></span><span><b>Is the adservice alert related to the checkout errors?</b><small>Red herring</small></span></button>
-          <button class="example" style="--c:#7c8ad8" data-q="billing-service is down, who do I page?"><span class="ico" data-icon="help"></span><span><b>billing-service is down, who do I page?</b><small>Not in the graph</small></span></button>
+          <button class="example" style="--c:var(--critical)" data-q="checkoutservice is throwing 5xx errors. What broke and who should I page?"><span class="ico" data-icon="zap"></span><span><b>checkoutservice is throwing 5xx errors. What broke and who should I page?</b><small>Finds the cause two hops away</small></span></button>
+          <button class="example" style="--c:var(--medium)" data-q="Is the adservice alert related to the checkout errors?"><span class="ico" data-icon="search"></span><span><b>Is the adservice alert related to the checkout errors?</b><small>No path in the graph: a red herring</small></span></button>
+          <button class="example" style="--c:var(--high)" data-q="What breaks if payments-db goes down?"><span class="ico" data-icon="network"></span><span><b>What breaks if payments-db goes down?</b><small>Everything that calls it, hop by hop</small></span></button>
+          <button class="example" style="--c:#8e7cf0" data-q="Which services are most critical?"><span class="ico" data-icon="target"></span><span><b>Which services are most critical?</b><small>Betweenness, computed in FalkorDB</small></span></button>
+          <button class="example" style="--c:#7c8ad8" data-q="billing-service is down, who do I page?"><span class="ico" data-icon="help"></span><span><b>billing-service is down, who do I page?</b><small>Not in the graph, and it says so</small></span></button>
+          <button class="example" style="--c:var(--ok-text)" data-q="I just got paged, is everything ok?"><span class="ico" data-icon="bell"></span><span><b>I just got paged, is everything ok?</b><small>Open an incident first: it remembers</small></span></button>
         </div>
         <div class="how">
-          <div><span data-icon="shield"></span>The model never writes Cypher. It picks one of six parameterised, read-only tools.</div>
-          <div><span data-icon="check"></span>Names, versions and people in the answer must come from a tool result.</div>
-          <div><span data-icon="list"></span>If no model is available, a rules diagnosis answers from the graph.</div>
+          <div><span data-icon="shield"></span>The model never writes Cypher: six fixed, read-only tools.</div>
+          <div><span data-icon="bell"></span>It recommends; you act. Open incident and Roll back take two clicks and are remembered in the graph.</div>
+          <div><span data-icon="list"></span>The same tools and actions work in Claude through MCP.</div>
         </div>
       </div>
       <article id="inv" hidden></article>
@@ -1305,7 +1336,62 @@ function verdictHtml(out) {
     ? `<div class="notice">${icon('alert', 'sm')}<span>Not in the graph: <b>${s.missing.map(esc).join(', ')}</b>. `
       + `Anything below is about what the graph does have.</span></div>`
     : '';
-  return `<div class="verdict">${notice}<div class="top${topCls}">${kind}${head}${sub ? `<div class="subline">${sub}</div>` : ''}</div>${rows}</div>`;
+  const how = reasoningSentence(out);
+  return `<div class="verdict">${notice}<div class="top${topCls}">${kind}${head}${sub ? `<div class="subline">${sub}</div>` : ''}`
+    + `${how ? `<div class="reasonline">${how}</div>` : ''}</div>${rows}</div>`;
+}
+
+/** The FalkorDB feature each tool leans on, shown beside its step in the reasoning trace. */
+const FEATURE = {
+  recent_changes: () => 'timestamp filters; incidents on record',
+  dependencies: () => 'variable-length path, DEPENDS_ON*1..8',
+  blast_radius: () => 'variable-length path, reversed',
+  dependency_path: () => 'algo.SPpaths, weighted by latency',
+  critical_services: r => `algo.${r.metric === 'pagerank' ? 'pageRank' : 'betweenness'}`,
+  who_to_page: () => 'OWNS and MEMBER_OF pattern',
+};
+const MAX_HOPS = 8;   // the *1..8 cap in tools.py
+
+/** How many hops deep a step's traversal went, or null for a step that is not a traversal. */
+function stepDepth(st) {
+  const r = st.result || {};
+  if (r.error) return null;
+  if (st.tool === 'dependencies') return Math.max(0, ...r.depends_on.map(d => d.hops));
+  if (st.tool === 'blast_radius') return Math.max(0, ...r.affected.map(d => d.hops));
+  if (st.tool === 'dependency_path' && r.path) return r.path.length - 1;
+  return null;
+}
+
+/**
+ * "How the graph decided": one sentence saying how much reasoning happened,
+ * then the steps in order, each with what it found, the FalkorDB feature it
+ * used and a hop gauge. Built only from the tool steps, so it is the same
+ * trace for a model answer and a rules answer. Clicking a step opens it in the
+ * Steps tab and lights what it touched on the graph.
+ */
+function reasoningSentence(out) {
+  const steps = out.steps.filter(st => !st.result?.error);
+  if (!steps.length) return '';
+  const deepest = Math.max(0, ...steps.map(st => stepDepth(st) ?? 0));
+  const ms = out.steps.reduce((a, st) => a + (st.ms || 0), 0), q = out.queries?.length || steps.length;
+  return `<b>${plural(steps.length, 'tool call')}</b>`
+    + (deepest ? ` reached <b>up to ${plural(deepest, 'hop')}</b> deep,` : ',')
+    + ` running <b>${plural(q, 'Cypher query', 'Cypher queries')}</b> in <b>${ms} ms</b> in FalkorDB.`;
+}
+
+function reasoningHtml(out) {
+  const steps = out.steps.map((st, i) => ({ st, i })).filter(({ st }) => !st.result?.error);
+  if (steps.length < 2) return '';   // one step: the card's summary line already says it
+  const sentence = reasoningSentence(out);
+  const rows = steps.map(({ st, i }, k) => {
+    const args = Object.values(st.args || {}).join(', '), d = stepDepth(st);
+    const gauge = d === null ? '' : `<span class="gauge" title="${d} of ${MAX_HOPS} possible hops">`
+      + Array.from({ length: MAX_HOPS }, (_, j) => `<i class="${j < d ? 'on' : ''}"></i>`).join('') + `<b>${d}</b></span>`;
+    return `<button class="rs" type="button" data-reason="${i}" title="Open this step on the graph">`
+      + `<span class="n">${k + 1}</span><span class="t">${esc(st.tool)}<span>(${esc(args)})</span></span>${gauge}`
+      + `<span class="found">${esc(stepResult(st))} · ${st.ms} ms</span><span class="feat">${esc(FEATURE[st.tool]?.(st.result) || '')}</span></button>`;
+  }).join('');
+  return `<div class="reason"><p>${sentence}</p><div class="rs-list">${rows}</div></div>`;
 }
 
 /**
@@ -1475,7 +1561,7 @@ function renderResult(entry) {
   const structured = s.root_cause || lastResult(out, 'blast_radius') || lastResult(out, 'critical_services');
   const inv = $('inv');
   inv.innerHTML = questionHtml(q) + tabsHtml(out)
-    + `<div class="pane" data-pane="answer">${verdictHtml(out)}`
+    + `<div class="pane" data-pane="answer">${verdictHtml(out)}${reasoningHtml(out)}`
     + `<div class="metarow">${modelBadge(out)}${checkTag(out)}</div>${fullTextHtml(out, !structured)}</div>`
     + `<div class="pane" data-pane="steps"><p class="pane-note">The tool calls, in order. Click one, or use ◀ ▶ under the graph, to see what it touched.</p>`
     + `<ol class="steps" id="steps">${stepsHtml(out)}</ol></div>`
@@ -1491,6 +1577,10 @@ function renderResult(entry) {
   const pages = cardPages(out.summary);
   inv.querySelectorAll('[data-page]').forEach(b => b.onclick = () => copyPage(q, out, pages[+b.dataset.page], b));
   inv.querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b, out));
+  inv.querySelectorAll('[data-reason]').forEach(b => b.onclick = () => {
+    showTab('steps');
+    list.querySelector(`li[data-i="${b.dataset.reason}"]`)?.click();
+  });
   stopReplay();
   current = { out, list }; pos = -1;
   stage(out);

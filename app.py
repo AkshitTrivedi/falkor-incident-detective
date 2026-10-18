@@ -2,6 +2,7 @@
 
 Routes:
   GET  /            the UI (static/index.html)
+  GET  /pitch       the six-slide intro deck (docs/pitch.html)
   GET  /api/graph   the topology to draw: services, dependencies, teams, on-call
                     people, and the deploys and open alerts from the last hour
   POST /api/ask     {"question": str} -> the agent's answer, its tool steps and
@@ -98,6 +99,12 @@ def _fresh_graph():
 def index():
     """Serve the one-page UI."""
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/pitch", include_in_schema=False)
+def pitch():
+    """Serve the six-slide intro deck (docs/pitch.html), linked from the UI header."""
+    return FileResponse(STATIC.parent / "docs" / "pitch.html")
 
 
 @app.get("/api/health")

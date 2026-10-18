@@ -118,7 +118,7 @@ claude mcp add incident-detective -- $(pwd)/graph-hacks-env/bin/python $(pwd)/mc
 
 Take the graph away and there is nothing to answer from. The central question, *"which deploy explains this alert?"*, is a traversal: the alerting service → everything it depends on, any depth → the most recent deploy to any of them → the person on call for that deploy's team. In SQL that is a recursive CTE per question; in the graph it is one pattern. Three things only work because the data is a graph:
 
-- **Root cause across hops.** The 5xx alert is on `checkoutservice`. The cause is a deploy to `fraud-check`, three hops away. Neither shares a team or an alert.
+- **Root cause across hops.** The 5xx alert is on `checkoutservice`. The cause is a deploy to `fraud-check`, two hops away (`checkoutservice → paymentservice → fraud-check`). Neither shares a team or an alert.
 - **Red herrings.** The `adservice` alert fired at the same time. Declaring it unrelated is a *negative path result*: no `DEPENDS_ON` path in either direction.
 - **Chokepoints.** "Most critical" is betweenness centrality, computed inside FalkorDB, not a hand-ranked list.
 
