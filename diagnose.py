@@ -61,7 +61,7 @@ _METRIC = re.compile(r"(?:\bwhat(?:'s| is| are) the\b|\bhow (?:much|high|many)\b
                      r"usage|utili[sz]ation|metrics?|load)\b")
 # Words that make a question about an incident, not about ownership.
 _INCIDENT = re.compile(r"\b(?:broke|broken|break|breaking|error|errors|5xx|4xx|fail|failing|failed|"
-                       r"failure|down|outage|slow|latency|timeout|timeouts|alert|alerts|incident|"
+                       r"failure|down|outage|slow|latency|timeout|timeouts|alert|alerts|incidents?|"
                        r"issue|issues|problem|problems|causing|cause|why|wrong|spik\w*|degraded|"
                        r"crash\w*|restart\w*|cpu|memory|can't|cannot|unable|not working|"
                        r"wake up|odd|weird|strange|stuck|hanging|unavailable)\b")
@@ -77,7 +77,7 @@ _ROLLBACK = re.compile(r"\broll(?:ing|ed)?[\s-]*back|\brevert")
 # of them and no service name ("hello there", "who is akshit?", "write me a
 # poem") gets _off_topic() instead of a dump of tool rows (live test, Oct 16).
 _ON_TOPIC = re.compile(r"\b(?:alert|alerts|deploy|deploys|deployed|deployment|release|version|"
-                       r"service|services|incident|outage|down|slow|latency|timeout|timeouts|"
+                       r"service|services|incidents?|outage|down|slow|latency|timeout|timeouts|"
                        r"cpu|memory|metric|metrics|database|db|cache|graph|depend\w*|upstream|"
                        r"downstream|root cause|cause|caused|why|owner|owns|team|on[- ]?call|page|"
                        r"paging|broke|broken|break\w*|error|errors|5xx|4xx|fail\w*|crash\w*|"

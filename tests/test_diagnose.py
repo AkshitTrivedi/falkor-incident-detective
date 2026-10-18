@@ -201,6 +201,13 @@ def test_off_topic_and_writes_run_no_tools(g, question):
     assert out["decided"] and out["steps"] == []
 
 
+@pytest.mark.parametrize("question", ["which incidents are there?", "any incidents right now?"])
+def test_plural_incidents_is_on_topic(g, question):
+    """Live UI, Oct 18: "which incidents are there?" was refused as off-topic."""
+    out = diagnose.rule_answer(g, question)
+    assert out["steps"] and "I can only answer" not in out["answer"]
+
+
 def test_several_services_none_explained_get_one_block_each(g):
     """No deploy reaches cartservice or adservice: each gets its own block, no row dump."""
     out = diagnose.rule_answer(g, "cartservice and adservice are both failing, what broke?")
