@@ -65,7 +65,7 @@ flowchart LR
     R -- yes --> A[LLM agent<br/>fallback chain of 4 models]
     A -- "picks 1 of 6 tools" --> T[Read-only tools<br/>parameterised Cypher]
     T <--> G[(FalkorDB<br/>incidents graph)]
-    A --> C{Checker<br/>26 rules}
+    A --> C{Checker<br/>27 rules}
     C -- pass --> OUT
     C -- fail --> A2[One retry]
     A2 --> C2{Checker}
@@ -189,14 +189,14 @@ Details that took testing against FalkorDB v4.22.0, worth knowing if you build o
 
 ## The checker
 
-A fluent wrong answer is worse than no answer at 3 a.m. After the model writes its answer, [`verify.py`](verify.py) reads it next to the raw tool results and lists every claim the graph does not support. An empty list is a pass. The 26 rules (numbered 1–21, plus 4b, 4c, 5b, 10b and 10c) fall into five groups:
+A fluent wrong answer is worse than no answer at 3 a.m. After the model writes its answer, [`verify.py`](verify.py) reads it next to the raw tool results and lists every claim the graph does not support. An empty list is a pass. The 27 rules (numbered 1–21, plus 4b, 4c, 5b, 10b, 10c and 19b) fall into five groups:
 
 | Group | What it catches | Example it caught |
 |---|---|---|
 | **Invented facts** (1–4, 6–10c) | A person, service, team, version or number no tool returned; an alert on a service that has none; a service count no tool list has | An on-call "Sarah Jenkins" who is not in the graph |
 | **Wrong reasoning** (5, 5b, 17, 18) | An alerting service on the failure chain listed as "unrelated"; a root cause with no path to the failing service; "X depends on Y" backwards | "Yes, payments-db depends on checkoutservice" (it is the other way round) |
 | **Questions about things that do not exist** (11–15) | A made-up service, version, person or team in the question that the answer does not call out; a real name wrongly called missing | "Did the paymentservice v2.0.0 deploy cause the latency?" answered as if v2.0.0 existed |
-| **Skipped work** (16, 19, 20) | Graph facts with no tool call behind them; paging someone without looking at recent deploys; ranking "most critical" by anything but betweenness | An empty reply that said "I'll check…" and ran nothing |
+| **Skipped work** (16, 19, 19b, 20) | Graph facts with no tool call behind them; paging someone without looking at recent deploys, or without naming the deploy on the failing chain; ranking "most critical" by anything but betweenness | An empty reply that said "I'll check…" and ran nothing |
 | **Unanswered question** (4b, 4c, 21) | A Page section that names nobody; "who should I page?" with no person; "Should we roll back X?" with no yes or no | "Page: use who_to_page on fraud-check" |
 
 When a check fails, the model gets one retry with the problems listed. If the retry fails too, the rules diagnosis answers. The checker's own mistakes are tested too: the rules are run over all 456 saved model answers in [`docs/model-eval/`](docs/model-eval/) to look for correct answers it would wrongly reject.
@@ -209,7 +209,7 @@ All numbers are from the code in this repository and can be reproduced with the 
 
 | Run | Cases | Passed | What it measures |
 |---|---|---|---|
-| Unit tests | 293 | 293 | Tools, checker, routing, card, no-key path, actions, MCP server |
+| Unit tests | 298 | 298 | Tools, checker, routing, card, no-key path, actions, MCP server |
 | Edge-case suite, no models (rules only) | 62 | 62 | Deterministic answers from the rules diagnosis |
 | Edge-case suite, live models | 62 | 62 | Full chain: real LLMs, checker, retry, card |
 | Checker over saved model answers | 456 | 42 rejected | All 42 read by hand: every one a real defect, no false positives |
